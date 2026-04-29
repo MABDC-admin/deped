@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Receipt, DollarSign, Search, Users, TrendingUp, CheckCircle2, Clock, CreditCard, Banknote, ArrowUpRight, ArrowDownRight, Printer, Eye, X, FileText, PiggyBank, AlertCircle, ChevronRight, Plus, Wallet } from 'lucide-react';
+import { Receipt, DollarSign, Search, Users, TrendingUp, CheckCircle2, Clock, CreditCard, Banknote, ArrowUpRight, ArrowDownRight, Printer, Eye, X, FileText, PiggyBank, AlertCircle, ChevronRight, Plus, Wallet, Calendar } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassCard from '../../components/ui/GlassCard';
@@ -14,6 +14,8 @@ export default function CashierProcess() {
   const [stats, setStats] = useState(null);
   const [recentPayments, setRecentPayments] = useState([]);
   const [outstandingStudents, setOutstandingStudents] = useState([]);
+  const [schoolYears, setSchoolYears] = useState([]);
+  const [selectedSY, setSelectedSY] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -26,40 +28,71 @@ export default function CashierProcess() {
   const [processing, setProcessing] = useState(false);
   const [receiptModal, setReceiptModal] = useState(null);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchSchoolYears(); }, []);
 
-  const fetchData = async () => {
+  useEffect(() => {
+    if (!selectedSY) return;
+    setSearchQuery('');
+    setSearchResults([]);
+    setSelectedStudent(null);
+    setSelectedStudentFees(null);
+    fetchData(selectedSY);
+  }, [selectedSY]);
+
+  const fetchSchoolYears = async () => {
+    setLoading(true);
     try {
-      const { data: activeYear } = await supabase
+      const { data, error } = await supabase
         .from('school_years')
-        .select('id')
-        .eq('is_current', true)
-        .maybeSingle();
-      const yearId = activeYear?.id;
+        .select('id, year_name, status, is_current, start_date')
+        .order('start_date', { ascending: false });
+      if (error) throw error;
+      const years = data || [];
+      setSchoolYears(years);
+      const active = years.find(y => y.is_current || y.status === 'active') || years[0];
+      if (active) setSelectedSY(active.id);
+      else {
+        setStats({ todayTotal: 0, todayCount: 0, totalCollected: 0, totalBalance: 0, totalStudents: 0, studentsWithBalance: 0 });
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to load school years');
+      setLoading(false);
+    }
+  };
 
-      let paymentsQuery = supabase
+  const fetchData = async (schoolYearId = selectedSY) => {
+    if (!schoolYearId) return;
+    setLoading(true);
+    try {
+      const paymentsQuery = supabase
         .from('payments')
         .select('*, students(first_name, last_name, lrn), student_fees!inner(school_year_id)')
+        .eq('student_fees.school_year_id', schoolYearId)
         .order('created_at', { ascending: false })
         .limit(20);
-      let feesQuery = supabase.from('student_fees').select('balance, student_id');
-      let outstandingQuery = supabase
+      const feesQuery = supabase
+        .from('student_fees')
+        .select('balance, student_id')
+        .eq('school_year_id', schoolYearId);
+      const outstandingQuery = supabase
         .from('student_fees')
         .select('*, students(first_name, last_name, lrn, enrollments(grade_levels(name), sections(name)))')
+        .eq('school_year_id', schoolYearId)
         .gt('balance', 0)
         .order('balance', { ascending: false })
         .limit(10);
-
-      if (yearId) {
-        paymentsQuery = paymentsQuery.eq('student_fees.school_year_id', yearId);
-        feesQuery = feesQuery.eq('school_year_id', yearId);
-        outstandingQuery = outstandingQuery.eq('school_year_id', yearId);
-      }
+      const enrolledQuery = supabase
+        .from('enrollments')
+        .select('id', { count: 'exact', head: true })
+        .eq('school_year_id', schoolYearId)
+        .eq('status', 'enrolled');
 
       const [payments, fees, students, feeTypesRes, studentFees] = await Promise.all([
         paymentsQuery,
         feesQuery,
-        supabase.from('students').select('id', { count: 'exact', head: true }),
+        enrolledQuery,
         supabase.from('fee_types').select('*').eq('is_active', true).order('name'),
         outstandingQuery,
       ]);
@@ -92,31 +125,56 @@ export default function CashierProcess() {
 
   // Search students
   useEffect(() => {
-    if (!searchQuery || searchQuery.length < 2) { setSearchResults([]); return; }
+    if (!searchQuery || searchQuery.length < 2 || !selectedSY) { setSearchResults([]); return; }
     const timer = setTimeout(async () => {
       setSearching(true);
       const { data } = await supabase.from('students')
-        .select('id, first_name, last_name, lrn, enrollments(grade_levels(name), sections(name))')
+        .select('id, first_name, last_name, lrn, enrollments!inner(school_year_id, status, grade_levels(name), sections(name))')
+        .eq('enrollments.school_year_id', selectedSY)
+        .eq('enrollments.status', 'enrolled')
         .or(`first_name.ilike.%${searchQuery}%,last_name.ilike.%${searchQuery}%,lrn.ilike.%${searchQuery}%`)
         .limit(8);
       setSearchResults(data || []);
       setSearching(false);
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, selectedSY]);
 
-  const openPaymentModal = async (student) => {
-    setSelectedStudent(student);
-    // Fetch this student's current fees (current school year)
-    const { data: sf } = await supabase.from('student_fees')
-      .select('id, total_fees, total_discount, total_paid, balance, school_years(year_name)')
-      .eq('student_id', student.id)
+  const loadStudentFees = async (studentId, schoolYearId = selectedSY) => {
+    if (!studentId || !schoolYearId) return null;
+    const { data: sf, error } = await supabase.from('student_fees')
+      .select('id, total_fees, total_discount, total_paid, balance, school_year_id, school_years(year_name)')
+      .eq('student_id', studentId)
+      .eq('school_year_id', schoolYearId)
       .gt('balance', 0)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (error) {
+      console.error(error);
+      toast.error('Failed to load student fees');
+      return null;
+    }
+    return sf || null;
+  };
+
+  const selectStudentForPayment = async (student) => {
+    setSelectedStudent(student);
+    setSelectedStudentFees(null);
+    const sf = await loadStudentFees(student.id);
     setSelectedStudentFees(sf || null);
     setPaymentForm({ amount: '', payment_method: 'cash', remarks: '', fee_type_id: feeTypes[0]?.id || '' });
+    setSearchQuery('');
+    setSearchResults([]);
+  };
+
+  const openPaymentModal = async (student = null) => {
+    if (student) await selectStudentForPayment(student);
+    else {
+      setSelectedStudent(null);
+      setSelectedStudentFees(null);
+      setPaymentForm({ amount: '', payment_method: 'cash', remarks: '', fee_type_id: feeTypes[0]?.id || '' });
+    }
     setShowPaymentModal(true);
     setSearchQuery('');
     setSearchResults([]);
@@ -125,6 +183,14 @@ export default function CashierProcess() {
   const processPayment = async () => {
     if (!selectedStudent || !paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
       toast.error('Please enter a valid amount');
+      return;
+    }
+    if (!selectedSY) {
+      toast.error('Please select a school year');
+      return;
+    }
+    if (!selectedStudentFees) {
+      toast.error('No outstanding fee found for the selected school year');
       return;
     }
     const amount = parseFloat(paymentForm.amount);
@@ -140,7 +206,7 @@ export default function CashierProcess() {
       const orNumber = `OR-${Date.now().toString(36).toUpperCase()}`;
       const paymentData = {
         student_id: selectedStudent.id,
-        student_fee_id: selectedStudentFees?.id || null,
+        student_fee_id: selectedStudentFees.id,
         amount: amount,
         payment_method: paymentForm.payment_method,
         payment_date: new Date().toISOString().split('T')[0],
@@ -188,7 +254,7 @@ export default function CashierProcess() {
         feeType: feeTypes.find(f => f.id === paymentForm.fee_type_id)?.name || 'General',
       });
       setShowPaymentModal(false);
-      fetchData();
+      fetchData(selectedSY);
     } catch (err) {
       toast.error(err.message || 'Payment failed');
     } finally {
@@ -197,12 +263,13 @@ export default function CashierProcess() {
   };
 
   const formatCurrency = (n) => `₱${parseFloat(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  const selectedYear = schoolYears.find(y => y.id === selectedSY);
 
   if (loading) return <SkeletonDashboard />;
 
   const kpis = [
     { label: "Today's Collection", value: formatCurrency(stats.todayTotal), sub: `${stats.todayCount} transactions today`, icon: Banknote, color: 'from-green-500 to-emerald-500', up: true },
-    { label: 'Total Collected', value: formatCurrency(stats.totalCollected), sub: 'This school year', icon: TrendingUp, color: 'from-blue-500 to-cyan-500', up: true },
+    { label: 'Total Collected', value: formatCurrency(stats.totalCollected), sub: selectedYear?.year_name || 'Selected school year', icon: TrendingUp, color: 'from-blue-500 to-cyan-500', up: true },
     { label: 'Outstanding Balance', value: formatCurrency(stats.totalBalance), sub: `${stats.studentsWithBalance} students with balance`, icon: AlertCircle, color: 'from-amber-500 to-orange-500', up: false },
     { label: 'Enrolled Students', value: stats.totalStudents, sub: 'Active enrollees', icon: Users, color: 'from-violet-500 to-purple-500', up: true },
   ];
@@ -219,12 +286,26 @@ export default function CashierProcess() {
             {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
-        <button
-          onClick={() => { setSelectedStudent(null); setShowPaymentModal(true); }}
-          className="px-6 py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold hover:shadow-lg hover:shadow-green-500/25 transition-all flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" /> New Payment
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+          <div className="relative">
+            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <select
+              value={selectedSY}
+              onChange={(e) => setSelectedSY(e.target.value)}
+              className="w-full sm:w-56 pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/80 dark:bg-gray-800/80 text-sm font-medium text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-green-500"
+            >
+              {schoolYears.map(sy => (
+                <option key={sy.id} value={sy.id}>{sy.year_name} {sy.is_current || sy.status === 'active' ? '(Active)' : ''}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={() => openPaymentModal()}
+            className="px-6 py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold hover:shadow-lg hover:shadow-green-500/25 transition-all flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" /> New Payment
+          </button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -387,7 +468,7 @@ export default function CashierProcess() {
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'New Payment', icon: CreditCard, color: 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400', action: () => setShowPaymentModal(true) },
+            { label: 'New Payment', icon: CreditCard, color: 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400', action: () => openPaymentModal() },
             { label: 'Fee Summary', icon: PiggyBank, color: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400', action: () => window.location.href = '/fees' },
             { label: 'All Payments', icon: FileText, color: 'bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400', action: () => window.location.href = '/payments' },
             { label: 'Students', icon: Users, color: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400', action: () => window.location.href = '/students' },
@@ -428,7 +509,7 @@ export default function CashierProcess() {
                   </div>
                   <div className="mt-3 space-y-2 max-h-60 overflow-y-auto">
                     {searchResults.map(s => (
-                      <div key={s.id} onClick={() => setSelectedStudent(s)} className="flex items-center gap-3 p-3 rounded-xl hover:bg-green-50 dark:hover:bg-green-900/10 cursor-pointer border border-gray-100 dark:border-gray-800 transition-colors">
+                      <div key={s.id} onClick={() => selectStudentForPayment(s)} className="flex items-center gap-3 p-3 rounded-xl hover:bg-green-50 dark:hover:bg-green-900/10 cursor-pointer border border-gray-100 dark:border-gray-800 transition-colors">
                         <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-white font-bold text-xs">
                           {s.first_name?.charAt(0)}{s.last_name?.charAt(0)}
                         </div>
@@ -450,14 +531,14 @@ export default function CashierProcess() {
                       <p className="text-sm font-semibold text-gray-900 dark:text-white">{selectedStudent.last_name}, {selectedStudent.first_name}</p>
                       <p className="text-xs text-gray-500">LRN: {selectedStudent.lrn}</p>
                     </div>
-                    <button onClick={() => setSelectedStudent(null)} className="text-xs text-green-600 hover:underline">Change</button>
+                    <button onClick={() => { setSelectedStudent(null); setSelectedStudentFees(null); }} className="text-xs text-green-600 hover:underline">Change</button>
                   </div>
 
                   {/* Student Balance Info */}
                   {selectedStudentFees ? (
                     <div className="p-3 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 border border-amber-200 dark:border-amber-800">
                       <div className="flex justify-between items-center">
-                        <span className="text-sm text-amber-700 dark:text-amber-300">Outstanding Balance</span>
+                        <span className="text-sm text-amber-700 dark:text-amber-300">Outstanding Balance ({selectedStudentFees.school_years?.year_name || selectedYear?.year_name})</span>
                         <span className="text-lg font-bold text-amber-800 dark:text-amber-200">{formatCurrency(selectedStudentFees.balance)}</span>
                       </div>
                       <div className="flex justify-between text-xs text-amber-600 dark:text-amber-400 mt-1">
@@ -467,7 +548,7 @@ export default function CashierProcess() {
                     </div>
                   ) : (
                     <div className="p-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
-                      <span className="text-sm text-green-700 dark:text-green-300">✅ No outstanding balance</span>
+                      <span className="text-sm text-green-700 dark:text-green-300">No outstanding balance for {selectedYear?.year_name || 'selected school year'}</span>
                     </div>
                   )}
 
@@ -527,7 +608,7 @@ export default function CashierProcess() {
 
                   <button
                     onClick={processPayment}
-                    disabled={processing || !paymentForm.amount}
+                    disabled={processing || !paymentForm.amount || !selectedStudentFees}
                     className="w-full py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold hover:shadow-lg hover:shadow-green-500/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {processing ? (
