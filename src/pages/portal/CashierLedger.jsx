@@ -40,6 +40,22 @@ const formatDate = (value) => {
   })
 }
 
+const formatReceiptDate = (value) => {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('en-PH', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+const formatPaymentMethod = (value) =>
+  String(value || 'cash')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase())
+
 const studentName = (student) => {
   if (!student) return ''
   return [student.last_name, student.first_name].filter(Boolean).join(', ')
@@ -87,6 +103,7 @@ export default function CashierLedger() {
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [paymentForm, setPaymentForm] = useState(defaultPaymentForm)
   const [processing, setProcessing] = useState(false)
+  const [receiptModal, setReceiptModal] = useState(null)
 
   useEffect(() => {
     loadSchoolYears()
@@ -397,6 +414,28 @@ export default function CashierLedger() {
         .eq('id', payableFee.id)
       if (updateError) throw updateError
 
+      const gradeSection = [
+        selectedStudent.enrollment?.grade_levels?.name,
+        selectedStudent.enrollment?.sections?.name,
+      ].filter(Boolean).join(' - ') || '-'
+      const cashierName = user?.user_metadata?.first_name
+        ? `${user.user_metadata.first_name} ${user.user_metadata.last_name || ''}`.trim()
+        : user?.email || 'Cashier'
+      setReceiptModal({
+        orNumber,
+        studentName: studentName(selectedStudent),
+        lrn: selectedStudent.lrn || '-',
+        gradeSection,
+        schoolYear: selectedYear?.year_name || 'Selected School Year',
+        feeType: getFeeTypeName(paymentForm.fee_type_id) || 'General Payment',
+        amount,
+        method: paymentForm.payment_method,
+        paymentDate: new Date().toISOString(),
+        cashierName,
+        remarks: paymentForm.remarks || '',
+        previousBalance: parseFloat(payableFee.balance || 0),
+        newBalance: Math.max(projectedBalance, 0),
+      })
       toast.success(`Collected ${formatCurrency(amount)} from ${selectedStudent.first_name || 'student'}`)
       setShowPaymentModal(false)
       setPaymentForm(defaultPaymentForm)
@@ -654,6 +693,184 @@ export default function CashierLedger() {
     }, 250)
   }
 
+  const handlePrintReceipt = (receipt) => {
+    if (!receipt) return
+
+    const printWindow = window.open('', '_blank', 'width=560,height=760')
+    if (!printWindow) {
+      toast.error('Popup blocked. Please allow popups to print the receipt.')
+      return
+    }
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Payment Receipt - ${escapeHtml(receipt.orNumber)}</title>
+          <style>
+            @page { size: A5 portrait; margin: 10mm; }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              color: #111827;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 12px;
+              line-height: 1.35;
+              background: #fff;
+            }
+            .receipt { max-width: 135mm; margin: 0 auto; }
+            .header {
+              text-align: center;
+              padding-bottom: 12px;
+              border-bottom: 2px solid #111827;
+            }
+            .system { font-size: 12px; color: #4b5563; margin-bottom: 4px; }
+            .title { font-size: 22px; font-weight: 800; margin: 0; letter-spacing: 0; }
+            .or-number {
+              display: inline-block;
+              margin-top: 8px;
+              padding: 5px 10px;
+              border: 1px solid #111827;
+              border-radius: 6px;
+              font-family: "Courier New", monospace;
+              font-weight: 800;
+            }
+            .amount-box {
+              margin: 16px 0;
+              border: 2px solid #111827;
+              border-radius: 10px;
+              text-align: center;
+              padding: 14px;
+              break-inside: avoid;
+            }
+            .amount-label {
+              color: #4b5563;
+              text-transform: uppercase;
+              font-size: 10px;
+              font-weight: 800;
+              letter-spacing: .06em;
+            }
+            .amount { margin-top: 4px; font-size: 28px; font-weight: 800; }
+            .section { margin-top: 14px; break-inside: avoid; }
+            .section-title {
+              margin: 0 0 6px;
+              color: #374151;
+              font-size: 11px;
+              text-transform: uppercase;
+              letter-spacing: .05em;
+              font-weight: 800;
+            }
+            .row {
+              display: grid;
+              grid-template-columns: 105px 1fr;
+              gap: 10px;
+              padding: 7px 0;
+              border-bottom: 1px solid #e5e7eb;
+            }
+            .label { color: #6b7280; }
+            .value { color: #111827; font-weight: 700; overflow-wrap: anywhere; }
+            .mono { font-family: "Courier New", monospace; }
+            .balance-row {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
+              margin-top: 12px;
+            }
+            .balance-card {
+              border: 1px solid #d1d5db;
+              border-radius: 8px;
+              padding: 10px;
+            }
+            .balance-label {
+              color: #6b7280;
+              font-size: 10px;
+              text-transform: uppercase;
+              font-weight: 800;
+              letter-spacing: .05em;
+            }
+            .balance-value { margin-top: 4px; font-size: 14px; font-weight: 800; }
+            .footer {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 28px;
+              margin-top: 36px;
+              break-inside: avoid;
+            }
+            .signature {
+              border-top: 1px solid #111827;
+              text-align: center;
+              padding-top: 6px;
+              color: #374151;
+              font-size: 11px;
+            }
+            .note { margin-top: 16px; color: #6b7280; font-size: 10px; text-align: center; }
+            @media print {
+              body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="receipt">
+            <section class="header">
+              <div class="system">DepEd School Management System</div>
+              <h1 class="title">Official Receipt</h1>
+              <div class="or-number">${escapeHtml(receipt.orNumber)}</div>
+            </section>
+
+            <section class="amount-box">
+              <div class="amount-label">Amount Received</div>
+              <div class="amount">${escapeHtml(formatCurrency(receipt.amount))}</div>
+            </section>
+
+            <section class="section">
+              <h2 class="section-title">Student Information</h2>
+              <div class="row"><div class="label">Student</div><div class="value">${escapeHtml(receipt.studentName)}</div></div>
+              <div class="row"><div class="label">LRN</div><div class="value mono">${escapeHtml(receipt.lrn)}</div></div>
+              <div class="row"><div class="label">Grade/Section</div><div class="value">${escapeHtml(receipt.gradeSection)}</div></div>
+              <div class="row"><div class="label">School Year</div><div class="value">${escapeHtml(receipt.schoolYear)}</div></div>
+            </section>
+
+            <section class="section">
+              <h2 class="section-title">Payment Details</h2>
+              <div class="row"><div class="label">Date</div><div class="value">${escapeHtml(formatReceiptDate(receipt.paymentDate))}</div></div>
+              <div class="row"><div class="label">Fee Type</div><div class="value">${escapeHtml(receipt.feeType)}</div></div>
+              <div class="row"><div class="label">Method</div><div class="value">${escapeHtml(formatPaymentMethod(receipt.method))}</div></div>
+              <div class="row"><div class="label">Cashier</div><div class="value">${escapeHtml(receipt.cashierName)}</div></div>
+              ${receipt.remarks ? `<div class="row"><div class="label">Remarks</div><div class="value">${escapeHtml(receipt.remarks)}</div></div>` : ''}
+            </section>
+
+            <section class="balance-row">
+              <div class="balance-card">
+                <div class="balance-label">Previous Balance</div>
+                <div class="balance-value">${escapeHtml(formatCurrency(receipt.previousBalance))}</div>
+              </div>
+              <div class="balance-card">
+                <div class="balance-label">New Balance</div>
+                <div class="balance-value">${escapeHtml(formatCurrency(receipt.newBalance))}</div>
+              </div>
+            </section>
+
+            <section class="footer">
+              <div class="signature">Cashier</div>
+              <div class="signature">Received by</div>
+            </section>
+            <div class="note">This receipt was generated after payment posting.</div>
+          </main>
+        </body>
+      </html>
+    `
+
+    printWindow.document.open()
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.focus()
+    setTimeout(() => {
+      printWindow.print()
+      printWindow.close()
+    }, 250)
+  }
+
   const handleYearChange = (schoolYearId) => {
     const nextYear = schoolYears.find(y => y.id === schoolYearId)
     saveCashierSchoolYearId(schoolYearId)
@@ -661,6 +878,7 @@ export default function CashierLedger() {
     setSelectedYear(nextYear || null)
     setSearch('')
     setShowPaymentModal(false)
+    setReceiptModal(null)
   }
 
   if (loading) return <div className="space-y-6"><SkeletonDashboard /><SkeletonTable /></div>
@@ -1019,6 +1237,73 @@ export default function CashierLedger() {
                 </button>
               </div>
             </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {receiptModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setReceiptModal(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.94, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.94, y: 16 }}
+              className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="text-center mb-5">
+                <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-white mb-3">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Payment Receipt</h3>
+                <p className="text-sm text-gray-400 font-mono mt-1">{receiptModal.orNumber}</p>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-5">
+                <div className="p-4 bg-green-50 dark:bg-green-900/20 text-center border-b border-gray-200 dark:border-gray-800">
+                  <p className="text-xs uppercase tracking-wider text-green-700 dark:text-green-300 font-bold">Amount Received</p>
+                  <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">{formatCurrency(receiptModal.amount)}</p>
+                </div>
+                <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {[
+                    { label: 'Student', value: receiptModal.studentName },
+                    { label: 'LRN', value: receiptModal.lrn },
+                    { label: 'School Year', value: receiptModal.schoolYear },
+                    { label: 'Fee Type', value: receiptModal.feeType },
+                    { label: 'Method', value: formatPaymentMethod(receiptModal.method) },
+                    { label: 'Date', value: formatReceiptDate(receiptModal.paymentDate) },
+                    { label: 'Previous Balance', value: formatCurrency(receiptModal.previousBalance) },
+                    { label: 'New Balance', value: formatCurrency(receiptModal.newBalance) },
+                  ].map(field => (
+                    <div key={field.label} className="flex items-start justify-between gap-4 px-4 py-2.5">
+                      <span className="text-sm text-gray-500 shrink-0">{field.label}</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-white text-right break-words">{field.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handlePrintReceipt(receiptModal)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-all flex items-center justify-center gap-2"
+                >
+                  <Printer className="w-4 h-4" /> Print Receipt
+                </button>
+                <button
+                  onClick={() => setReceiptModal(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-medium hover:shadow-lg transition-all"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
