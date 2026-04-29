@@ -41,6 +41,7 @@ import TeacherClasses from './pages/portal/TeacherClasses'
 import PrincipalOverview from './pages/portal/PrincipalOverview'
 import GuidanceWellness from './pages/portal/GuidanceWellness'
 import CashierProcess from './pages/portal/CashierProcess'
+import CashierLedger from './pages/portal/CashierLedger'
 import ParentChildren from './pages/portal/ParentChildren'
 import StudentGrades from './pages/portal/StudentGrades'
 import RegistrarRecords from './pages/portal/RegistrarRecords'
@@ -111,6 +112,7 @@ export default function App() {
               <Route path="portal/principal/overview" element={<RoleGuard allowed={["principal"]}><PrincipalOverview /></RoleGuard>} />
               <Route path="portal/guidance/wellness" element={<RoleGuard allowed={["guidance"]}><GuidanceWellness /></RoleGuard>} />
               <Route path="portal/cashier/process" element={<RoleGuard allowed={["cashier"]}><CashierProcess /></RoleGuard>} />
+              <Route path="portal/cashier/ledger" element={<RoleGuard allowed={["cashier"]}><CashierLedger /></RoleGuard>} />
               <Route path="portal/parent/children" element={<RoleGuard allowed={["parent"]}><ParentChildren /></RoleGuard>} />
               <Route path="portal/student/grades" element={<RoleGuard allowed={["student"]}><StudentGrades /></RoleGuard>} />
               <Route path="portal/registrar/records" element={<RoleGuard allowed={["registrar"]}><RegistrarRecords /></RoleGuard>} />

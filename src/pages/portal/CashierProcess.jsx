@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Receipt, DollarSign, Search, Users, TrendingUp, CheckCircle2, Clock, CreditCard, Banknote, ArrowUpRight, ArrowDownRight, Printer, Eye, X, FileText, PiggyBank, AlertCircle, ChevronRight, Plus, Wallet, Calendar } from 'lucide-react';
+import { Receipt, DollarSign, Search, Users, TrendingUp, CheckCircle2, Clock, CreditCard, Banknote, ArrowUpRight, ArrowDownRight, Printer, Eye, X, FileText, PiggyBank, AlertCircle, ChevronRight, Plus, Wallet, Calendar, BookOpen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import GlassCard from '../../components/ui/GlassCard';
@@ -10,6 +11,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import toast from 'react-hot-toast';
 
 export default function CashierProcess() {
+  const location = useLocation();
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
   const [recentPayments, setRecentPayments] = useState([]);
@@ -28,7 +30,7 @@ export default function CashierProcess() {
   const [processing, setProcessing] = useState(false);
   const [receiptModal, setReceiptModal] = useState(null);
 
-  useEffect(() => { fetchSchoolYears(); }, []);
+  useEffect(() => { fetchSchoolYears(); }, [location.search]);
 
   useEffect(() => {
     if (!selectedSY) return;
@@ -49,7 +51,8 @@ export default function CashierProcess() {
       if (error) throw error;
       const years = data || [];
       setSchoolYears(years);
-      const active = years.find(y => y.is_current || y.status === 'active') || years[0];
+      const requestedYear = new URLSearchParams(location.search).get('school_year_id');
+      const active = years.find(y => y.id === requestedYear) || years.find(y => y.is_current || y.status === 'active') || years[0];
       if (active) setSelectedSY(active.id);
       else {
         setStats({ todayTotal: 0, todayCount: 0, totalCollected: 0, totalBalance: 0, totalStudents: 0, studentsWithBalance: 0 });
@@ -521,9 +524,10 @@ export default function CashierProcess() {
         <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
           <Banknote className="w-5 h-5 text-green-500" /> Quick Actions
         </h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
             { label: 'New Payment', icon: CreditCard, color: 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400', action: () => openPaymentModal() },
+            { label: 'Student Ledger', icon: BookOpen, color: 'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400', action: () => window.location.href = selectedSY ? `/portal/cashier/ledger?school_year_id=${selectedSY}` : '/portal/cashier/ledger' },
             { label: 'Fee Summary', icon: PiggyBank, color: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400', action: () => window.location.href = '/fees' },
             { label: 'All Payments', icon: FileText, color: 'bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400', action: () => window.location.href = '/payments' },
             { label: 'Students', icon: Users, color: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400', action: () => window.location.href = selectedSY ? `/students?school_year_id=${selectedSY}` : '/students' },

@@ -166,6 +166,7 @@ export const roleNavConfig = {
         items: [
           { label: 'Dashboard', path: '/', icon: LayoutDashboard },
           { label: 'Process Payment', path: '/portal/cashier/process', icon: Receipt },
+          { label: 'Student Ledger', path: '/portal/cashier/ledger', icon: BookOpen },
           { label: 'Announcements', path: '/announcements', icon: Megaphone },
           { label: 'Notifications', path: '/notifications', icon: Bell },
         ]
