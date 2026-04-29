@@ -41,6 +41,14 @@ const studentName = (student) => {
   return [student.last_name, student.first_name].filter(Boolean).join(', ')
 }
 
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+
 function MetricCard({ label, value, sub, icon: Icon, tone = 'text-gray-700' }) {
   return (
     <GlassCard className="p-4" hover={false}>
@@ -290,6 +298,253 @@ export default function CashierLedger() {
     return { totalFees, totalDiscount, totalPaid, balance, status, rows }
   }, [ledger, selectedStudent])
 
+  const getFeeTypeName = (feeTypeId) => ledger.feeTypes.find(type => type.id === feeTypeId)?.name
+
+  const handlePrintLedger = () => {
+    if (!selectedStudent) {
+      toast.error('Please select a student first')
+      return
+    }
+
+    const printWindow = window.open('', '_blank', 'width=900,height=1100')
+    if (!printWindow) {
+      toast.error('Popup blocked. Please allow popups to print the ledger.')
+      return
+    }
+
+    const studentDisplayName = studentName(selectedStudent)
+    const gradeSection = [
+      selectedStudent.enrollment?.grade_levels?.name,
+      selectedStudent.enrollment?.sections?.name,
+    ].filter(Boolean).join(' - ') || '-'
+    const printedAt = new Date().toLocaleString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+    const statusLabel = (ledgerView.status || 'unpaid').replace('_', ' ').toUpperCase()
+
+    const chargeRows = ledger.charges.length
+      ? ledger.charges.map(charge => `
+          <tr>
+            <td>${escapeHtml(charge.fee_types?.name || 'Fee')}</td>
+            <td>${escapeHtml(formatDate(charge.due_date))}</td>
+            <td class="amount">${escapeHtml(formatCurrency(charge.amount))}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="3" class="empty">No fee structure found for this grade level.</td></tr>'
+
+    const paymentRows = ledger.payments.length
+      ? ledger.payments.map(payment => `
+          <tr>
+            <td>${escapeHtml(formatDate(payment.payment_date))}</td>
+            <td>${escapeHtml(getFeeTypeName(payment.fee_type_id) || payment.or_number || payment.receipt_number || 'Payment')}</td>
+            <td>${escapeHtml(payment.or_number || payment.receipt_number || '-')}</td>
+            <td>${escapeHtml(payment.payment_method || '-')}</td>
+            <td class="amount">${escapeHtml(formatCurrency(payment.amount))}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="5" class="empty">No payments recorded for this school year.</td></tr>'
+
+    const ledgerRows = ledgerView.rows.length
+      ? ledgerView.rows.map(row => `
+          <tr>
+            <td>${escapeHtml(formatDate(row.date))}</td>
+            <td>${escapeHtml(row.type)}</td>
+            <td>
+              ${escapeHtml(row.description)}
+              ${row.receipt ? `<div class="muted mono">${escapeHtml(row.receipt)}</div>` : ''}
+            </td>
+            <td class="amount">${row.debit ? escapeHtml(formatCurrency(row.debit)) : '-'}</td>
+            <td class="amount">${row.credit ? escapeHtml(formatCurrency(row.credit)) : '-'}</td>
+            <td class="amount strong">${escapeHtml(formatCurrency(row.running))}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="6" class="empty">No ledger entries yet.</td></tr>'
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Student Ledger - ${escapeHtml(studentDisplayName)}</title>
+          <style>
+            @page { size: A4; margin: 14mm; }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              color: #111827;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 11px;
+              line-height: 1.35;
+              background: #fff;
+            }
+            .sheet { max-width: 190mm; margin: 0 auto; }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              gap: 18px;
+              padding-bottom: 12px;
+              border-bottom: 2px solid #111827;
+            }
+            .title { font-size: 22px; font-weight: 800; letter-spacing: 0; margin: 0; }
+            .subtitle { margin-top: 4px; color: #4b5563; font-size: 12px; }
+            .print-meta { text-align: right; color: #4b5563; white-space: nowrap; }
+            .block { margin-top: 14px; break-inside: avoid; }
+            .grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; }
+            .panel { border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; }
+            .panel-title {
+              margin: 0 0 8px;
+              font-size: 11px;
+              color: #374151;
+              text-transform: uppercase;
+              letter-spacing: .05em;
+              font-weight: 800;
+            }
+            .info-row { display: grid; grid-template-columns: 95px 1fr; gap: 8px; padding: 3px 0; }
+            .label { color: #6b7280; }
+            .value { font-weight: 700; color: #111827; }
+            .summary {
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 8px;
+              margin-top: 12px;
+            }
+            .summary-card {
+              border: 1px solid #d1d5db;
+              border-radius: 8px;
+              padding: 10px;
+              min-height: 58px;
+            }
+            .summary-label { color: #6b7280; font-size: 10px; text-transform: uppercase; font-weight: 800; letter-spacing: .04em; }
+            .summary-value { margin-top: 5px; font-size: 15px; font-weight: 800; }
+            .balance-due { color: #b45309; }
+            .paid { color: #047857; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+            th {
+              background: #f3f4f6;
+              color: #374151;
+              font-size: 10px;
+              text-transform: uppercase;
+              letter-spacing: .04em;
+              text-align: left;
+              padding: 7px 8px;
+              border: 1px solid #d1d5db;
+            }
+            td {
+              padding: 7px 8px;
+              border: 1px solid #d1d5db;
+              vertical-align: top;
+              overflow-wrap: anywhere;
+            }
+            .amount { text-align: right; white-space: nowrap; }
+            .strong { font-weight: 800; }
+            .muted { color: #6b7280; }
+            .mono { font-family: "Courier New", monospace; }
+            .empty { text-align: center; color: #6b7280; padding: 18px 8px; }
+            .section-title {
+              margin: 0 0 8px;
+              font-size: 13px;
+              font-weight: 800;
+              color: #111827;
+            }
+            .signature-row {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 36px;
+              margin-top: 32px;
+              break-inside: avoid;
+            }
+            .signature-line { border-top: 1px solid #111827; padding-top: 6px; text-align: center; color: #374151; }
+            @media print {
+              body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+              .no-print { display: none; }
+              .block { page-break-inside: avoid; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              <div>
+                <h1 class="title">Student Ledger</h1>
+                <div class="subtitle">DepEd School Management System</div>
+              </div>
+              <div class="print-meta">
+                <div><strong>${escapeHtml(selectedYear?.year_name || 'Selected School Year')}</strong></div>
+                <div>Printed ${escapeHtml(printedAt)}</div>
+              </div>
+            </section>
+
+            <section class="block grid">
+              <div class="panel">
+                <h2 class="panel-title">Student Information</h2>
+                <div class="info-row"><div class="label">Name</div><div class="value">${escapeHtml(studentDisplayName)}</div></div>
+                <div class="info-row"><div class="label">LRN</div><div class="value mono">${escapeHtml(selectedStudent.lrn || '-')}</div></div>
+                <div class="info-row"><div class="label">Grade/Section</div><div class="value">${escapeHtml(gradeSection)}</div></div>
+                <div class="info-row"><div class="label">Status</div><div class="value">${escapeHtml(selectedStudent.status || '-')}</div></div>
+              </div>
+              <div class="panel">
+                <h2 class="panel-title">Account Status</h2>
+                <div class="info-row"><div class="label">Ledger Status</div><div class="value">${escapeHtml(statusLabel)}</div></div>
+                <div class="info-row"><div class="label">School Year</div><div class="value">${escapeHtml(selectedYear?.year_name || '-')}</div></div>
+                <div class="info-row"><div class="label">Payments</div><div class="value">${ledger.payments.length}</div></div>
+              </div>
+            </section>
+
+            <section class="summary">
+              <div class="summary-card"><div class="summary-label">Assessment</div><div class="summary-value">${escapeHtml(formatCurrency(ledgerView.totalFees))}</div></div>
+              <div class="summary-card"><div class="summary-label">Discount</div><div class="summary-value">${escapeHtml(formatCurrency(ledgerView.totalDiscount))}</div></div>
+              <div class="summary-card"><div class="summary-label">Paid</div><div class="summary-value paid">${escapeHtml(formatCurrency(ledgerView.totalPaid))}</div></div>
+              <div class="summary-card"><div class="summary-label">Balance</div><div class="summary-value ${ledgerView.balance > 0 ? 'balance-due' : 'paid'}">${escapeHtml(formatCurrency(ledgerView.balance))}</div></div>
+            </section>
+
+            <section class="block">
+              <h2 class="section-title">Fee Breakdown</h2>
+              <table>
+                <thead><tr><th>Fee</th><th style="width: 28%;">Due Date</th><th style="width: 25%;">Amount</th></tr></thead>
+                <tbody>${chargeRows}</tbody>
+              </table>
+            </section>
+
+            <section class="block">
+              <h2 class="section-title">Payment History</h2>
+              <table>
+                <thead><tr><th style="width: 16%;">Date</th><th>Fee/Description</th><th style="width: 22%;">OR/Receipt</th><th style="width: 16%;">Method</th><th style="width: 18%;">Amount</th></tr></thead>
+                <tbody>${paymentRows}</tbody>
+              </table>
+            </section>
+
+            <section class="block">
+              <h2 class="section-title">Ledger Entries</h2>
+              <table>
+                <thead><tr><th style="width: 15%;">Date</th><th style="width: 17%;">Type</th><th>Description</th><th style="width: 15%;">Debit</th><th style="width: 15%;">Credit</th><th style="width: 16%;">Balance</th></tr></thead>
+                <tbody>${ledgerRows}</tbody>
+              </table>
+            </section>
+
+            <section class="signature-row">
+              <div class="signature-line">Prepared by Cashier</div>
+              <div class="signature-line">Received / Verified by</div>
+            </section>
+          </main>
+        </body>
+      </html>
+    `
+
+    printWindow.document.open()
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.focus()
+    setTimeout(() => {
+      printWindow.print()
+      printWindow.close()
+    }, 250)
+  }
+
   const handleYearChange = (schoolYearId) => {
     const nextYear = schoolYears.find(y => y.id === schoolYearId)
     setSelectedSY(schoolYearId)
@@ -416,7 +671,7 @@ export default function CashierLedger() {
                     </div>
                   </div>
                   <button
-                    onClick={() => window.print()}
+                    onClick={handlePrintLedger}
                     className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                   >
                     <Printer className="w-4 h-4" /> Print
@@ -464,7 +719,7 @@ export default function CashierLedger() {
                       {ledger.payments.map(payment => (
                         <div key={payment.id} className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{ledger.feeTypes.find(type => type.id === payment.fee_type_id)?.name || payment.or_number || payment.receipt_number || 'Payment'}</p>
+                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{getFeeTypeName(payment.fee_type_id) || payment.or_number || payment.receipt_number || 'Payment'}</p>
                             <p className="text-xs text-gray-400">{formatDate(payment.payment_date)} · {payment.payment_method || '-'}</p>
                           </div>
                           <p className="text-sm font-bold text-green-600">{formatCurrency(payment.amount)}</p>
