@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Receipt, DollarSign, Search, Users, TrendingUp, CheckCircle2, Clock, CreditCard, Banknote, ArrowUpRight, ArrowDownRight, Printer, Eye, X, FileText, PiggyBank, AlertCircle, ChevronRight, Plus, Wallet, Calendar, BookOpen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getSavedCashierSchoolYearId, saveCashierSchoolYearId } from '../../lib/schoolYearSelection';
 import GlassCard from '../../components/ui/GlassCard';
 import AnimatedCounter from '../../components/ui/AnimatedCounter';
 import { SkeletonDashboard } from '../../components/ui/SkeletonLoader';
@@ -34,6 +35,7 @@ export default function CashierProcess() {
 
   useEffect(() => {
     if (!selectedSY) return;
+    saveCashierSchoolYearId(selectedSY);
     setSearchQuery('');
     setSearchResults([]);
     setSelectedStudent(null);
@@ -52,7 +54,8 @@ export default function CashierProcess() {
       const years = data || [];
       setSchoolYears(years);
       const requestedYear = new URLSearchParams(location.search).get('school_year_id');
-      const active = years.find(y => y.id === requestedYear) || years.find(y => y.is_current || y.status === 'active') || years[0];
+      const savedYear = getSavedCashierSchoolYearId();
+      const active = years.find(y => y.id === requestedYear) || years.find(y => y.id === savedYear) || years.find(y => y.is_current || y.status === 'active') || years[0];
       if (active) setSelectedSY(active.id);
       else {
         setStats({ todayTotal: 0, todayCount: 0, totalCollected: 0, totalBalance: 0, totalStudents: 0, studentsWithBalance: 0 });

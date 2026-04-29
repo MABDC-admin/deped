@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { getSavedCashierSchoolYearId, saveCashierSchoolYearId } from '../../lib/schoolYearSelection'
 import { useAuth } from '../../contexts/AuthContext'
 import GlassCard from '../../components/ui/GlassCard'
 import EmptyState from '../../components/ui/EmptyState'
@@ -93,6 +94,7 @@ export default function CashierLedger() {
 
   useEffect(() => {
     if (!selectedSY) return
+    saveCashierSchoolYearId(selectedSY)
     loadStudents(selectedSY)
   }, [selectedSY])
 
@@ -115,7 +117,8 @@ export default function CashierLedger() {
       if (error) throw error
       const years = data || []
       const requestedYear = new URLSearchParams(location.search).get('school_year_id')
-      const nextYear = years.find(y => y.id === requestedYear) || years.find(y => y.is_current || y.status === 'active') || years[0]
+      const savedYear = getSavedCashierSchoolYearId()
+      const nextYear = years.find(y => y.id === requestedYear) || years.find(y => y.id === savedYear) || years.find(y => y.is_current || y.status === 'active') || years[0]
 
       setSchoolYears(years)
       setSelectedSY(nextYear?.id || '')
