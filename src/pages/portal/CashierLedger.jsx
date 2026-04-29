@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
   Banknote,
@@ -15,14 +15,17 @@ import {
   User,
   Users,
   Wallet,
+  X,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
 import GlassCard from '../../components/ui/GlassCard'
 import EmptyState from '../../components/ui/EmptyState'
 import { SkeletonDashboard, SkeletonTable } from '../../components/ui/SkeletonLoader'
 import toast from 'react-hot-toast'
 
 const emptyLedger = { fees: [], payments: [], charges: [], feeTypes: [] }
+const defaultPaymentForm = { amount: '', payment_method: 'cash', remarks: '', fee_type_id: '' }
 
 const formatCurrency = (amount) =>
   `₱${parseFloat(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
@@ -69,6 +72,7 @@ function MetricCard({ label, value, sub, icon: Icon, tone = 'text-gray-700' }) {
 export default function CashierLedger() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [schoolYears, setSchoolYears] = useState([])
   const [selectedSY, setSelectedSY] = useState('')
   const [selectedYear, setSelectedYear] = useState(null)
@@ -79,6 +83,9 @@ export default function CashierLedger() {
   const [studentsLoading, setStudentsLoading] = useState(false)
   const [ledgerLoading, setLedgerLoading] = useState(false)
   const [ledger, setLedger] = useState(emptyLedger)
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [paymentForm, setPaymentForm] = useState(defaultPaymentForm)
+  const [processing, setProcessing] = useState(false)
 
   useEffect(() => {
     loadSchoolYears()
@@ -200,7 +207,7 @@ export default function CashierLedger() {
         chargesQuery,
         supabase
           .from('fee_types')
-          .select('id, name')
+          .select('id, name, school_year_id, is_active')
           .order('name'),
       ])
 
@@ -213,7 +220,7 @@ export default function CashierLedger() {
         fees: feesRes.data || [],
         payments: paymentsRes.data || [],
         charges: chargesRes.data || [],
-        feeTypes: feeTypesRes.data || [],
+        feeTypes: (feeTypesRes.data || []).filter(type => type.is_active !== false && (!type.school_year_id || type.school_year_id === schoolYearId)),
       })
     } catch (err) {
       console.error(err)
@@ -299,6 +306,105 @@ export default function CashierLedger() {
   }, [ledger, selectedStudent])
 
   const getFeeTypeName = (feeTypeId) => ledger.feeTypes.find(type => type.id === feeTypeId)?.name
+  const payableFee = useMemo(
+    () => ledger.fees.find(row => parseFloat(row.balance || 0) > 0) || null,
+    [ledger.fees]
+  )
+
+  const openPaymentModal = () => {
+    if (!selectedStudent) {
+      toast.error('Please select a student first')
+      return
+    }
+    if (!payableFee) {
+      toast.error('No outstanding fee found for this student')
+      return
+    }
+    setPaymentForm({ ...defaultPaymentForm, fee_type_id: ledger.feeTypes[0]?.id || '' })
+    setShowPaymentModal(true)
+  }
+
+  const processLedgerPayment = async (e) => {
+    e.preventDefault()
+    if (!selectedStudent || !selectedSY) {
+      toast.error('Please select a student and school year')
+      return
+    }
+    if (!payableFee) {
+      toast.error('No outstanding fee found for this student')
+      return
+    }
+    const amount = parseFloat(paymentForm.amount)
+    if (!amount || amount <= 0) {
+      toast.error('Please enter a valid amount')
+      return
+    }
+    if (amount > parseFloat(payableFee.balance || 0)) {
+      toast.error(`Amount exceeds outstanding balance of ${formatCurrency(payableFee.balance)}`)
+      return
+    }
+
+    setProcessing(true)
+    try {
+      const orNumber = `OR-${Date.now().toString(36).toUpperCase()}`
+      const paymentData = {
+        student_id: selectedStudent.id,
+        student_fee_id: payableFee.id,
+        amount,
+        payment_method: paymentForm.payment_method,
+        payment_date: new Date().toISOString().split('T')[0],
+        remarks: paymentForm.remarks || null,
+        or_number: orNumber,
+        fee_type_id: paymentForm.fee_type_id || null,
+        received_by: user?.id,
+        status: 'completed',
+        receipt_number: orNumber,
+        processed_by: user?.id,
+      }
+      const { data: payment, error } = await supabase
+        .from('payments')
+        .insert(paymentData)
+        .select()
+        .single()
+      if (error) throw error
+
+      const { error: receiptError } = await supabase.from('receipts').insert({
+        or_number: orNumber,
+        payment_id: payment.id,
+        student_id: selectedStudent.id,
+        amount,
+        payment_method: paymentForm.payment_method,
+        payment_date: new Date().toISOString().split('T')[0],
+        cashier_id: user?.id,
+        cashier_name: user?.user_metadata?.first_name
+          ? `${user.user_metadata.first_name} ${user.user_metadata.last_name || ''}`.trim()
+          : user?.email,
+        remarks: paymentForm.remarks || null,
+      })
+      if (receiptError) throw receiptError
+
+      const newPaid = (parseFloat(payableFee.total_paid) || 0) + amount
+      const projectedBalance = (parseFloat(payableFee.total_fees) || 0) - (parseFloat(payableFee.total_discount) || 0) - newPaid
+      const { error: updateError } = await supabase
+        .from('student_fees')
+        .update({
+          total_paid: newPaid,
+          status: projectedBalance <= 0 ? 'paid' : 'partial',
+        })
+        .eq('id', payableFee.id)
+      if (updateError) throw updateError
+
+      toast.success(`Collected ${formatCurrency(amount)} from ${selectedStudent.first_name || 'student'}`)
+      setShowPaymentModal(false)
+      setPaymentForm(defaultPaymentForm)
+      await loadLedger(selectedStudent, selectedSY)
+    } catch (err) {
+      console.error(err)
+      toast.error(err.message || 'Payment failed')
+    } finally {
+      setProcessing(false)
+    }
+  }
 
   const handlePrintLedger = () => {
     if (!selectedStudent) {
@@ -550,6 +656,7 @@ export default function CashierLedger() {
     setSelectedSY(schoolYearId)
     setSelectedYear(nextYear || null)
     setSearch('')
+    setShowPaymentModal(false)
   }
 
   if (loading) return <div className="space-y-6"><SkeletonDashboard /><SkeletonTable /></div>
@@ -670,12 +777,21 @@ export default function CashierLedger() {
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={handlePrintLedger}
-                    className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                  >
-                    <Printer className="w-4 h-4" /> Print
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      onClick={openPaymentModal}
+                      disabled={!payableFee}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white text-sm font-semibold flex items-center justify-center gap-2 hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <CreditCard className="w-4 h-4" /> Collect Payment
+                    </button>
+                    <button
+                      onClick={handlePrintLedger}
+                      className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    >
+                      <Printer className="w-4 h-4" /> Print
+                    </button>
+                  </div>
                 </div>
               </GlassCard>
 
@@ -773,6 +889,135 @@ export default function CashierLedger() {
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {showPaymentModal && selectedStudent && payableFee && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => !processing && setShowPaymentModal(false)}
+          >
+            <motion.form
+              initial={{ scale: 0.94, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.94, y: 16 }}
+              onSubmit={processLedgerPayment}
+              className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-lg w-full p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <CreditCard className="w-5 h-5 text-green-500" /> Collect Payment
+                </h3>
+                <button
+                  type="button"
+                  disabled={processing}
+                  onClick={() => setShowPaymentModal(false)}
+                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{studentName(selectedStudent)}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">LRN {selectedStudent.lrn || '-'} · {selectedYear?.year_name || 'Selected SY'}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-amber-700 dark:text-amber-300">Balance</p>
+                      <p className="text-lg font-bold text-amber-700 dark:text-amber-300">{formatCurrency(payableFee.balance)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    max={payableFee.balance || undefined}
+                    value={paymentForm.amount}
+                    onChange={e => setPaymentForm(prev => ({ ...prev, amount: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-lg font-bold outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="0.00"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fee Type</label>
+                  <select
+                    value={paymentForm.fee_type_id}
+                    onChange={e => setPaymentForm(prev => ({ ...prev, fee_type_id: e.target.value }))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                  >
+                    <option value="">General Payment</option>
+                    {ledger.feeTypes.map(type => (
+                      <option key={type.id} value={type.id}>{type.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Payment Method</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'cash', label: 'Cash' },
+                      { id: 'bank_transfer', label: 'Bank' },
+                      { id: 'gcash', label: 'GCash' },
+                    ].map(method => (
+                      <button
+                        key={method.id}
+                        type="button"
+                        onClick={() => setPaymentForm(prev => ({ ...prev, payment_method: method.id }))}
+                        className={`p-3 rounded-xl border-2 text-sm font-medium transition-all ${
+                          paymentForm.payment_method === method.id
+                            ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                            : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-green-300'
+                        }`}
+                      >
+                        {method.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Remarks</label>
+                  <textarea
+                    value={paymentForm.remarks}
+                    onChange={e => setPaymentForm(prev => ({ ...prev, remarks: e.target.value }))}
+                    rows={2}
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="Optional notes"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={processing || !paymentForm.amount}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold hover:shadow-lg hover:shadow-green-500/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {processing ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-5 h-5" />
+                      Collect {paymentForm.amount ? formatCurrency(paymentForm.amount) : 'Payment'}
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
