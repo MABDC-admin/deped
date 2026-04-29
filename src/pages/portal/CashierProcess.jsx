@@ -62,16 +62,14 @@ export default function CashierProcess() {
     }
   };
 
-  const fetchEnrollmentMap = async (studentIds, schoolYearId) => {
-    const ids = [...new Set((studentIds || []).filter(Boolean))];
-    if (ids.length === 0 || !schoolYearId) return {};
+  const fetchYearEnrollmentMap = async (schoolYearId) => {
+    if (!schoolYearId) return {};
 
     const { data, error } = await supabase
       .from('enrollments')
       .select('student_id, grade_levels(name), sections(name)')
       .eq('school_year_id', schoolYearId)
-      .eq('status', 'enrolled')
-      .in('student_id', ids);
+      .eq('status', 'enrolled');
 
     if (error) {
       console.error(error);
@@ -104,44 +102,40 @@ export default function CashierProcess() {
         .eq('school_year_id', schoolYearId)
         .gt('balance', 0)
         .order('balance', { ascending: false })
-        .limit(10);
-      const enrolledQuery = supabase
-        .from('enrollments')
-        .select('id', { count: 'exact', head: true })
-        .eq('school_year_id', schoolYearId)
-        .eq('status', 'enrolled');
+        .limit(1000);
 
-      const [payments, fees, students, feeTypesRes, studentFees] = await Promise.all([
+      const [payments, fees, enrollmentMap, feeTypesRes, studentFees] = await Promise.all([
         paymentsQuery,
         feesQuery,
-        enrolledQuery,
+        fetchYearEnrollmentMap(schoolYearId),
         supabase.from('fee_types').select('*').eq('is_active', true).order('name'),
         outstandingQuery,
       ]);
 
-      const paymentData = payments.data || [];
+      const enrolledIds = new Set(Object.keys(enrollmentMap));
+      const feeData = (fees.data || []).filter(f => enrolledIds.has(f.student_id));
+      const paymentData = (payments.data || []).filter(p => enrolledIds.has(p.student_id));
       const today = new Date().toDateString();
       const todayPayments = paymentData.filter(p => new Date(p.created_at).toDateString() === today);
       const todayTotal = todayPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
       const totalCollected = paymentData.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-      const totalBalance = (fees.data || []).reduce((sum, f) => sum + (parseFloat(f.balance) || 0), 0);
-      const studentFeeData = studentFees.data || [];
-      const enrollmentMap = await fetchEnrollmentMap(studentFeeData.map(sf => sf.student_id), schoolYearId);
+      const totalBalance = feeData.reduce((sum, f) => sum + (parseFloat(f.balance) || 0), 0);
+      const studentFeeData = (studentFees.data || []).filter(sf => enrolledIds.has(sf.student_id));
       const outstandingForYear = studentFeeData.map(sf => ({
         ...sf,
         students: sf.students ? {
           ...sf.students,
-          enrollments: enrollmentMap[sf.student_id] ? [enrollmentMap[sf.student_id]] : [],
+          enrollments: [enrollmentMap[sf.student_id]],
         } : sf.students,
-      }));
+      })).slice(0, 10);
 
       setStats({
         todayTotal,
         todayCount: todayPayments.length,
         totalCollected,
         totalBalance,
-        totalStudents: students.count || 0,
-        studentsWithBalance: (fees.data || []).filter(f => parseFloat(f.balance) > 0).length,
+        totalStudents: enrolledIds.size,
+        studentsWithBalance: feeData.filter(f => parseFloat(f.balance) > 0).length,
       });
       setRecentPayments(paymentData.slice(0, 10));
       setFeeTypes(feeTypesRes.data || []);
@@ -175,11 +169,12 @@ export default function CashierProcess() {
       }
 
       const q = searchQuery.toLowerCase();
+      const enrollmentMap = await fetchYearEnrollmentMap(selectedSY);
       const uniqueStudents = [];
       const seen = new Set();
       (data || []).forEach(row => {
         const student = row.students;
-        if (!student || seen.has(student.id)) return;
+        if (!student || seen.has(student.id) || !enrollmentMap[student.id]) return;
         seen.add(student.id);
         uniqueStudents.push(student);
       });
@@ -191,10 +186,9 @@ export default function CashierProcess() {
           return name.includes(q) || reverseName.includes(q) || lrn.includes(q);
         })
         .slice(0, 8);
-      const enrollmentMap = await fetchEnrollmentMap(matchedStudents.map(s => s.id), selectedSY);
       setSearchResults(matchedStudents.map(student => ({
         ...student,
-        enrollments: enrollmentMap[student.id] ? [enrollmentMap[student.id]] : [],
+        enrollments: [enrollmentMap[student.id]],
       })));
       setSearching(false);
     }, 300);
