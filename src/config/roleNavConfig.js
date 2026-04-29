@@ -256,15 +256,6 @@ export const roleNavConfig = {
           { label: 'Schedule', path: '/schedule', icon: Calendar },
           { label: 'Subjects', path: '/subjects', icon: BookOpen },
         ]
-      },
-      {
-        title: 'Administration',
-        items: [
-          { label: 'Users', path: '/users', icon: Shield },
-          { label: 'School Info', path: '/settings/school-info', icon: School },
-          { label: 'Settings', path: '/settings/system', icon: Settings },
-          { label: 'Audit Log', path: '/audit-logs', icon: Eye },
-        ]
       }
     ]
   }
