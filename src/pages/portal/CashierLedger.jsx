@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { syncInvoiceFromStudentFee } from '../../lib/invoiceSync'
 import { getSavedCashierSchoolYearId, saveCashierSchoolYearId } from '../../lib/schoolYearSelection'
 import { useAuth } from '../../contexts/AuthContext'
 import GlassCard from '../../components/ui/GlassCard'
@@ -413,6 +414,20 @@ export default function CashierLedger() {
         })
         .eq('id', payableFee.id)
       if (updateError) throw updateError
+
+      const syncedStudentFee = {
+        ...payableFee,
+        total_paid: newPaid,
+        balance: Math.max(projectedBalance, 0),
+        status: projectedBalance <= 0 ? 'paid' : 'partial',
+      }
+      const { error: invoiceSyncError } = await syncInvoiceFromStudentFee(supabase, {
+        studentFee: syncedStudentFee,
+        studentId: selectedStudent.id,
+        schoolYearId: selectedSY,
+        generatedBy: user?.id || null,
+      })
+      if (invoiceSyncError) throw invoiceSyncError
 
       const gradeSection = [
         selectedStudent.enrollment?.grade_levels?.name,

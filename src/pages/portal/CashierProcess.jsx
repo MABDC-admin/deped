@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Receipt, DollarSign, Search, Users, TrendingUp, CheckCircle2, Clock, CreditCard, Banknote, ArrowUpRight, ArrowDownRight, Printer, Eye, X, FileText, PiggyBank, AlertCircle, ChevronRight, Plus, Wallet, Calendar, BookOpen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { syncInvoiceFromStudentFee } from '../../lib/invoiceSync';
 import { getSavedCashierSchoolYearId, saveCashierSchoolYearId } from '../../lib/schoolYearSelection';
 import GlassCard from '../../components/ui/GlassCard';
 import AnimatedCounter from '../../components/ui/AnimatedCounter';
@@ -299,10 +300,24 @@ export default function CashierProcess() {
       if (selectedStudentFees) {
         const newPaid = (parseFloat(selectedStudentFees.total_paid) || 0) + amount;
         const projectedBalance = parseFloat(selectedStudentFees.total_fees) - parseFloat(selectedStudentFees.total_discount || 0) - newPaid;
-        await supabase.from('student_fees').update({
+        const { error: feeUpdateError } = await supabase.from('student_fees').update({
           total_paid: newPaid,
           status: projectedBalance <= 0 ? 'paid' : 'partial',
         }).eq('id', selectedStudentFees.id);
+        if (feeUpdateError) throw feeUpdateError;
+
+        const { error: invoiceSyncError } = await syncInvoiceFromStudentFee(supabase, {
+          studentFee: {
+            ...selectedStudentFees,
+            total_paid: newPaid,
+            balance: Math.max(projectedBalance, 0),
+            status: projectedBalance <= 0 ? 'paid' : 'partial',
+          },
+          studentId: selectedStudent.id,
+          schoolYearId: selectedSY,
+          generatedBy: user?.id || null,
+        });
+        if (invoiceSyncError) throw invoiceSyncError;
       }
 
       toast.success(`Payment of ₱${amount.toLocaleString()} processed!`);

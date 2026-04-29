@@ -20,6 +20,13 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import {
+  defaultInvoiceDueDate,
+  generateInvoiceNumber,
+  getStudentFeeForInvoice,
+  invoiceFieldsFromStudentFee,
+  syncInvoiceFromStudentFee,
+} from '../../lib/invoiceSync';
 import toast from 'react-hot-toast';
 import GlassCard from '../../components/ui/GlassCard';
 import { SkeletonTable, SkeletonDashboard } from '../../components/ui/SkeletonLoader';
@@ -37,12 +44,6 @@ const formatDate = (value, options = {}) => {
   });
 };
 
-const defaultDueDate = () => {
-  const date = new Date();
-  date.setDate(date.getDate() + 30);
-  return date.toISOString().split('T')[0];
-};
-
 const escapeHtml = (value) =>
   String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -53,6 +54,56 @@ const escapeHtml = (value) =>
 
 const studentName = (student) =>
   [student?.last_name, student?.first_name].filter(Boolean).join(', ') || 'Unassigned student';
+
+const ledgerInvoiceNumber = (studentFee) => `LEDGER-${String(studentFee?.id || '').slice(0, 8).toUpperCase()}`;
+
+const reconcileInvoicesWithLedger = (invoiceRows, studentFeeRows) => {
+  const invoiceByFee = new Map();
+  const invoiceByStudentYear = new Map();
+  const usedInvoiceIds = new Set();
+
+  invoiceRows.forEach(invoice => {
+    if (invoice.student_fee_id && !invoiceByFee.has(invoice.student_fee_id)) {
+      invoiceByFee.set(invoice.student_fee_id, invoice);
+    }
+    const key = `${invoice.student_id || ''}:${invoice.school_year_id || ''}`;
+    if (invoice.student_id && invoice.school_year_id && invoice.status !== 'void' && !invoiceByStudentYear.has(key)) {
+      invoiceByStudentYear.set(key, invoice);
+    }
+  });
+
+  const ledgerInvoices = studentFeeRows.map(studentFee => {
+    const key = `${studentFee.student_id || ''}:${studentFee.school_year_id || ''}`;
+    const matchedInvoice = invoiceByFee.get(studentFee.id) || invoiceByStudentYear.get(key) || null;
+    if (matchedInvoice?.id) usedInvoiceIds.add(matchedInvoice.id);
+
+    const ledgerFields = invoiceFieldsFromStudentFee(studentFee);
+    return {
+      ...matchedInvoice,
+      ...ledgerFields,
+      id: matchedInvoice?.id || `student-fee-${studentFee.id}`,
+      is_virtual: !matchedInvoice,
+      invoice_number: matchedInvoice?.invoice_number || ledgerInvoiceNumber(studentFee),
+      student_id: studentFee.student_id,
+      student_fee_id: studentFee.id,
+      school_year_id: studentFee.school_year_id,
+      due_date: matchedInvoice?.due_date || defaultInvoiceDueDate(studentFee.created_at),
+      status: matchedInvoice?.status === 'void' ? 'void' : ledgerFields.status,
+      notes: matchedInvoice?.notes || '',
+      created_at: matchedInvoice?.created_at || studentFee.created_at,
+      updated_at: matchedInvoice?.updated_at || studentFee.updated_at,
+      students: studentFee.students,
+      school_years: studentFee.school_years,
+      ledgerSynced: true,
+    };
+  });
+
+  const standaloneInvoices = invoiceRows
+    .filter(invoice => !usedInvoiceIds.has(invoice.id))
+    .map(invoice => ({ ...invoice, ledgerSynced: Boolean(invoice.student_fee_id) }));
+
+  return [...ledgerInvoices, ...standaloneInvoices].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+};
 
 const displayStatus = (invoice) => {
   if (!invoice) return 'unpaid';
@@ -162,20 +213,25 @@ const InvoiceList = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [invoicesRes, studentsRes, yearsRes] = await Promise.all([
+      const [invoicesRes, studentsRes, yearsRes, studentFeesRes] = await Promise.all([
         supabase
           .from('invoices')
           .select('*, students(first_name, last_name, lrn), school_years(year_name)')
           .order('created_at', { ascending: false }),
         supabase.from('students').select('id, first_name, last_name, lrn').order('last_name'),
         supabase.from('school_years').select('id, year_name, status, is_current, start_date').order('start_date', { ascending: false }),
+        supabase
+          .from('student_fees')
+          .select('id, student_id, school_year_id, total_fees, total_discount, total_paid, balance, status, created_at, updated_at, students(first_name, last_name, lrn), school_years(year_name)')
+          .order('created_at', { ascending: false }),
       ]);
 
       if (invoicesRes.error) throw invoicesRes.error;
       if (studentsRes.error) throw studentsRes.error;
       if (yearsRes.error) throw yearsRes.error;
+      if (studentFeesRes.error) throw studentFeesRes.error;
 
-      setInvoices(invoicesRes.data || []);
+      setInvoices(reconcileInvoicesWithLedger(invoicesRes.data || [], studentFeesRes.data || []));
       setStudents(studentsRes.data || []);
       setSchoolYears(yearsRes.data || []);
     } catch (err) {
@@ -245,20 +301,13 @@ const InvoiceList = () => {
     ? 'All school years'
     : schoolYears.find(sy => sy.id === yearFilter)?.year_name || 'Selected school year';
 
-  const generateInvoiceNumber = () => {
-    const now = new Date();
-    const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const rand = String(Math.floor(1000 + Math.random() * 9000));
-    return `INV-${date}-${rand}`;
-  };
-
   const resetForm = () => {
     setForm({
       student_id: '',
       school_year_id: activeSchoolYear?.id || '',
       total_amount: '',
       discount_amount: '0',
-      due_date: defaultDueDate(),
+      due_date: defaultInvoiceDueDate(),
       notes: '',
     });
   };
@@ -277,7 +326,7 @@ const InvoiceList = () => {
       school_year_id: invoice.school_year_id || '',
       total_amount: invoice.total_amount || '',
       discount_amount: invoice.discount_amount || '0',
-      due_date: invoice.due_date || '',
+      due_date: invoice.due_date || defaultInvoiceDueDate(),
       notes: invoice.notes || '',
     });
     setStudentSearch('');
@@ -286,27 +335,52 @@ const InvoiceList = () => {
   };
 
   const handleSave = async () => {
-    if (!form.student_id || !form.total_amount || !form.due_date) {
+    if (!form.student_id || !form.due_date) {
       toast.error('Please fill in required fields');
-      return;
-    }
-
-    const totalAmount = parseFloat(form.total_amount) || 0;
-    const discountAmount = parseFloat(form.discount_amount) || 0;
-    if (totalAmount <= 0) {
-      toast.error('Total amount must be greater than zero');
-      return;
-    }
-    if (discountAmount < 0 || discountAmount > totalAmount) {
-      toast.error('Discount must be between zero and the total amount');
       return;
     }
 
     setSaving(true);
     try {
+      const linkedStudentFee = await getStudentFeeForInvoice(supabase, form.student_id, form.school_year_id);
+
+      if (linkedStudentFee) {
+        const { error } = await syncInvoiceFromStudentFee(supabase, {
+          studentFee: linkedStudentFee,
+          studentId: form.student_id,
+          schoolYearId: form.school_year_id,
+          generatedBy: user?.id || null,
+          dueDate: form.due_date,
+          notes: form.notes,
+          invoiceId: editingInvoice?.is_virtual ? null : editingInvoice?.id,
+        });
+        if (error) throw error;
+        toast.success(editingInvoice ? 'Invoice synced with ledger' : 'Invoice created from ledger');
+        setShowModal(false);
+        setEditingInvoice(null);
+        fetchData();
+        return;
+      }
+
+      if (!form.total_amount) {
+        toast.error('Please enter an amount or select a student with ledger fees');
+        return;
+      }
+
+      const totalAmount = parseFloat(form.total_amount) || 0;
+      const discountAmount = parseFloat(form.discount_amount) || 0;
+      if (totalAmount <= 0) {
+        toast.error('Total amount must be greater than zero');
+        return;
+      }
+      if (discountAmount < 0 || discountAmount > totalAmount) {
+        toast.error('Discount must be between zero and the total amount');
+        return;
+      }
+
       const netAmount = totalAmount - discountAmount;
 
-      if (editingInvoice) {
+      if (editingInvoice && !editingInvoice.is_virtual) {
         const amountPaid = parseFloat(editingInvoice.amount_paid) || 0;
         const balance = Math.max(netAmount - amountPaid, 0);
         const { error } = await supabase.from('invoices').update({
@@ -353,6 +427,10 @@ const InvoiceList = () => {
   };
 
   const handleDelete = async (id) => {
+    if (String(id).startsWith('student-fee-')) {
+      toast.error('Ledger-generated invoices cannot be deleted here');
+      return;
+    }
     try {
       const { error } = await supabase.from('invoices').delete().eq('id', id);
       if (error) throw error;
@@ -366,6 +444,10 @@ const InvoiceList = () => {
   };
 
   const handleVoid = async (invoice) => {
+    if (invoice.is_virtual) {
+      toast.error('Create the invoice first before voiding it');
+      return;
+    }
     if (!voidReason.trim()) {
       toast.error('Please provide a reason for voiding');
       return;
@@ -693,7 +775,9 @@ const InvoiceList = () => {
                         <button onClick={() => setViewInvoice(invoice)} className="font-mono text-sm font-semibold text-blue-600 hover:text-blue-700">
                           {invoice.invoice_number}
                         </button>
-                        <p className="text-xs text-gray-400 mt-0.5">Issued {formatDate(invoice.created_at, { short: true })}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {invoice.ledgerSynced ? 'Ledger synced' : `Issued ${formatDate(invoice.created_at, { short: true })}`}
+                        </p>
                       </td>
                       <td className="px-4 py-3">
                         <p className="text-sm font-semibold text-gray-900 dark:text-white">{studentName(invoice.students)}</p>
@@ -718,14 +802,16 @@ const InvoiceList = () => {
                           <button onClick={() => handlePrint(invoice)} className="p-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 transition-colors" title="Print">
                             <Printer className="w-4 h-4" />
                           </button>
-                          {invoice.status !== 'void' && (
+                          {!invoice.is_virtual && invoice.status !== 'void' && (
                             <button onClick={() => { setVoidConfirm(invoice); setVoidReason(''); }} className="p-2 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 text-amber-600 transition-colors" title="Void">
                               <Ban className="w-4 h-4" />
                             </button>
                           )}
-                          <button onClick={() => setDeleteConfirm(invoice)} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors" title="Delete">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {!invoice.is_virtual && (
+                            <button onClick={() => setDeleteConfirm(invoice)} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors" title="Delete">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </motion.tr>
