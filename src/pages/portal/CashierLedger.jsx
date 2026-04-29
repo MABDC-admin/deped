@@ -20,6 +20,13 @@ import {
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { syncInvoiceFromStudentFee, updateStudentFeeFromInvoice } from '../../lib/invoiceSync'
+import {
+  activeDiscountTemplates,
+  calculateDiscountAmount,
+  discountAmountInputValue,
+  findMatchingDiscountTemplate,
+  formatDiscountTemplate,
+} from '../../lib/discountTemplates'
 import { getSavedCashierSchoolYearId, saveCashierSchoolYearId } from '../../lib/schoolYearSelection'
 import { useAuth } from '../../contexts/AuthContext'
 import GlassCard from '../../components/ui/GlassCard'
@@ -29,7 +36,7 @@ import toast from 'react-hot-toast'
 
 const emptyLedger = { fees: [], payments: [], charges: [], feeTypes: [] }
 const defaultPaymentForm = { amount: '', payment_method: 'cash', remarks: '', fee_type_id: '' }
-const defaultAssessmentForm = { total_amount: '', discount_amount: '0' }
+const defaultAssessmentForm = { total_amount: '', discount_type_id: '', discount_amount: '0' }
 const defaultBreakdownForm = { amount: '', due_date: '' }
 
 const formatCurrency = (amount) =>
@@ -95,6 +102,7 @@ export default function CashierLedger() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [schoolYears, setSchoolYears] = useState([])
+  const [discountTemplates, setDiscountTemplates] = useState([])
   const [selectedSY, setSelectedSY] = useState('')
   const [selectedYear, setSelectedYear] = useState(null)
   const [students, setStudents] = useState([])
@@ -115,6 +123,7 @@ export default function CashierLedger() {
 
   useEffect(() => {
     loadSchoolYears()
+    loadDiscountTemplates()
   }, [location.search])
 
   useEffect(() => {
@@ -153,6 +162,21 @@ export default function CashierLedger() {
       console.error(err)
       toast.error('Failed to load school years')
       setLoading(false)
+    }
+  }
+
+  const loadDiscountTemplates = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('discount_types')
+        .select('id, name, type, value, category, school_year_id, is_active')
+        .order('name')
+
+      if (error) throw error
+      setDiscountTemplates(data || [])
+    } catch (err) {
+      console.error(err)
+      setDiscountTemplates([])
     }
   }
 
@@ -335,6 +359,10 @@ export default function CashierLedger() {
 
   const getFeeTypeName = (feeTypeId) => ledger.feeTypes.find(type => type.id === feeTypeId)?.name
   const primaryFee = ledger.fees[0] || null
+  const assessmentDiscountTemplates = useMemo(
+    () => activeDiscountTemplates(discountTemplates, selectedSY),
+    [discountTemplates, selectedSY]
+  )
   const payableFee = useMemo(
     () => ledger.fees.find(row => parseFloat(row.balance || 0) > 0) || null,
     [ledger.fees]
@@ -384,11 +412,44 @@ export default function CashierLedger() {
       toast.error('No ledger assessment found for this student')
       return
     }
+    const discountTypeId = findMatchingDiscountTemplate(
+      discountTemplates,
+      primaryFee.total_discount,
+      primaryFee.total_fees,
+      selectedSY
+    )
     setAssessmentForm({
       total_amount: String(primaryFee.total_fees ?? ''),
+      discount_type_id: discountTypeId,
       discount_amount: String(primaryFee.total_discount ?? '0'),
     })
     setShowAssessmentModal(true)
+  }
+
+  const handleAssessmentTotalChange = (value) => {
+    setAssessmentForm(prev => {
+      const selectedTemplate = discountTemplates.find(template => template.id === prev.discount_type_id)
+      return {
+        ...prev,
+        total_amount: value,
+        discount_amount: selectedTemplate
+          ? discountAmountInputValue(calculateDiscountAmount(selectedTemplate, value))
+          : prev.discount_amount,
+      }
+    })
+  }
+
+  const handleAssessmentDiscountTemplateChange = (templateId) => {
+    setAssessmentForm(prev => {
+      const selectedTemplate = discountTemplates.find(template => template.id === templateId)
+      return {
+        ...prev,
+        discount_type_id: templateId,
+        discount_amount: selectedTemplate
+          ? discountAmountInputValue(calculateDiscountAmount(selectedTemplate, prev.total_amount))
+          : prev.discount_amount,
+      }
+    })
   }
 
   const saveAssessment = async (e) => {
@@ -1551,11 +1612,24 @@ export default function CashierLedger() {
                       min="0"
                       step="0.01"
                       value={assessmentForm.total_amount}
-                      onChange={e => setAssessmentForm(prev => ({ ...prev, total_amount: e.target.value }))}
+                      onChange={e => handleAssessmentTotalChange(e.target.value)}
                       className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-lg font-bold outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="0.00"
                       autoFocus
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount Template</label>
+                    <select
+                      value={assessmentForm.discount_type_id}
+                      onChange={e => handleAssessmentDiscountTemplateChange(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Custom discount</option>
+                      {assessmentDiscountTemplates.map(template => (
+                        <option key={template.id} value={template.id}>{formatDiscountTemplate(template, assessmentForm.total_amount)}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount</label>
@@ -1564,7 +1638,7 @@ export default function CashierLedger() {
                       min="0"
                       step="0.01"
                       value={assessmentForm.discount_amount}
-                      onChange={e => setAssessmentForm(prev => ({ ...prev, discount_amount: e.target.value }))}
+                      onChange={e => setAssessmentForm(prev => ({ ...prev, discount_type_id: '', discount_amount: e.target.value }))}
                       className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-lg font-bold outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="0.00"
                     />

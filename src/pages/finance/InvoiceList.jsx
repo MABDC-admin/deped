@@ -28,6 +28,13 @@ import {
   syncInvoiceFromStudentFee,
   updateStudentFeeFromInvoice,
 } from '../../lib/invoiceSync';
+import {
+  activeDiscountTemplates,
+  calculateDiscountAmount,
+  discountAmountInputValue,
+  findMatchingDiscountTemplate,
+  formatDiscountTemplate,
+} from '../../lib/discountTemplates';
 import toast from 'react-hot-toast';
 import GlassCard from '../../components/ui/GlassCard';
 import { SkeletonTable, SkeletonDashboard } from '../../components/ui/SkeletonLoader';
@@ -188,6 +195,7 @@ const InvoiceList = () => {
   const [invoices, setInvoices] = useState([]);
   const [students, setStudents] = useState([]);
   const [schoolYears, setSchoolYears] = useState([]);
+  const [discountTemplates, setDiscountTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -204,6 +212,7 @@ const InvoiceList = () => {
     student_id: '',
     school_year_id: '',
     total_amount: '',
+    discount_type_id: '',
     discount_amount: '0',
     due_date: '',
     notes: '',
@@ -214,7 +223,7 @@ const InvoiceList = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [invoicesRes, studentsRes, yearsRes, studentFeesRes] = await Promise.all([
+      const [invoicesRes, studentsRes, yearsRes, studentFeesRes, discountTemplatesRes] = await Promise.all([
         supabase
           .from('invoices')
           .select('*, students(first_name, last_name, lrn), school_years(year_name)')
@@ -225,22 +234,29 @@ const InvoiceList = () => {
           .from('student_fees')
           .select('id, student_id, school_year_id, total_fees, total_discount, total_paid, balance, status, created_at, updated_at, students(first_name, last_name, lrn), school_years(year_name)')
           .order('created_at', { ascending: false }),
+        supabase
+          .from('discount_types')
+          .select('id, name, type, value, category, school_year_id, is_active')
+          .order('name'),
       ]);
 
       if (invoicesRes.error) throw invoicesRes.error;
       if (studentsRes.error) throw studentsRes.error;
       if (yearsRes.error) throw yearsRes.error;
       if (studentFeesRes.error) throw studentFeesRes.error;
+      if (discountTemplatesRes.error) console.error(discountTemplatesRes.error);
 
       setInvoices(reconcileInvoicesWithLedger(invoicesRes.data || [], studentFeesRes.data || []));
       setStudents(studentsRes.data || []);
       setSchoolYears(yearsRes.data || []);
+      setDiscountTemplates(discountTemplatesRes.error ? [] : discountTemplatesRes.data || []);
     } catch (err) {
       console.error(err);
       toast.error(err.message || 'Failed to load invoices');
       setInvoices([]);
       setStudents([]);
       setSchoolYears([]);
+      setDiscountTemplates([]);
     } finally {
       setLoading(false);
     }
@@ -298,6 +314,10 @@ const InvoiceList = () => {
   );
 
   const selectedFormStudent = students.find(student => student.id === form.student_id);
+  const selectedFormDiscountTemplates = useMemo(
+    () => activeDiscountTemplates(discountTemplates, form.school_year_id),
+    [discountTemplates, form.school_year_id]
+  );
   const selectedYearLabel = yearFilter === 'all'
     ? 'All school years'
     : schoolYears.find(sy => sy.id === yearFilter)?.year_name || 'Selected school year';
@@ -307,9 +327,52 @@ const InvoiceList = () => {
       student_id: '',
       school_year_id: activeSchoolYear?.id || '',
       total_amount: '',
+      discount_type_id: '',
       discount_amount: '0',
       due_date: defaultInvoiceDueDate(),
       notes: '',
+    });
+  };
+
+  const handleFormSchoolYearChange = (schoolYearId) => {
+    setForm(prev => {
+      const selectedTemplate = discountTemplates.find(template => template.id === prev.discount_type_id);
+      const templateStillValid = selectedTemplate && activeDiscountTemplates([selectedTemplate], schoolYearId).length > 0;
+
+      return {
+        ...prev,
+        school_year_id: schoolYearId,
+        discount_type_id: templateStillValid ? prev.discount_type_id : '',
+        discount_amount: templateStillValid
+          ? discountAmountInputValue(calculateDiscountAmount(selectedTemplate, prev.total_amount))
+          : prev.discount_amount,
+      };
+    });
+  };
+
+  const handleTotalAmountChange = (value) => {
+    setForm(prev => {
+      const selectedTemplate = discountTemplates.find(template => template.id === prev.discount_type_id);
+      return {
+        ...prev,
+        total_amount: value,
+        discount_amount: selectedTemplate
+          ? discountAmountInputValue(calculateDiscountAmount(selectedTemplate, value))
+          : prev.discount_amount,
+      };
+    });
+  };
+
+  const handleDiscountTemplateChange = (templateId) => {
+    setForm(prev => {
+      const selectedTemplate = discountTemplates.find(template => template.id === templateId);
+      return {
+        ...prev,
+        discount_type_id: templateId,
+        discount_amount: selectedTemplate
+          ? discountAmountInputValue(calculateDiscountAmount(selectedTemplate, prev.total_amount))
+          : prev.discount_amount,
+      };
     });
   };
 
@@ -321,11 +384,18 @@ const InvoiceList = () => {
   };
 
   const openEditModal = (invoice) => {
+    const discountTypeId = findMatchingDiscountTemplate(
+      discountTemplates,
+      invoice.discount_amount,
+      invoice.total_amount,
+      invoice.school_year_id
+    );
     setEditingInvoice(invoice);
     setForm({
       student_id: invoice.student_id || '',
       school_year_id: invoice.school_year_id || '',
       total_amount: invoice.total_amount || '',
+      discount_type_id: discountTypeId,
       discount_amount: invoice.discount_amount || '0',
       due_date: invoice.due_date || defaultInvoiceDueDate(),
       notes: invoice.notes || '',
@@ -985,7 +1055,7 @@ const InvoiceList = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">School Year</label>
-                    <select value={form.school_year_id} onChange={e => setForm({ ...form, school_year_id: e.target.value })}
+                    <select value={form.school_year_id} onChange={e => handleFormSchoolYearChange(e.target.value)}
                       className="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm outline-none focus:ring-2 focus:ring-blue-500">
                       <option value="">Select school year</option>
                       {schoolYears.map(sy => (
@@ -1000,15 +1070,25 @@ const InvoiceList = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Total Amount</label>
-                    <input type="number" step="0.01" min="0" value={form.total_amount} onChange={e => setForm({ ...form, total_amount: e.target.value })}
+                    <input type="number" step="0.01" min="0" value={form.total_amount} onChange={e => handleTotalAmountChange(e.target.value)}
                       className="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.00" />
                   </div>
                   <div>
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Discount Template</label>
+                    <select value={form.discount_type_id} onChange={e => handleDiscountTemplateChange(e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="">Custom discount</option>
+                      {selectedFormDiscountTemplates.map(template => (
+                        <option key={template.id} value={template.id}>{formatDiscountTemplate(template, form.total_amount)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Discount</label>
-                    <input type="number" step="0.01" min="0" value={form.discount_amount} onChange={e => setForm({ ...form, discount_amount: e.target.value })}
+                    <input type="number" step="0.01" min="0" value={form.discount_amount} onChange={e => setForm({ ...form, discount_type_id: '', discount_amount: e.target.value })}
                       className="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.00" />
                   </div>
                   <div className="rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-3">
