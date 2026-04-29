@@ -11,7 +11,7 @@ export default function ParentChildren() {
   const [children, setChildren] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { fetchChildren(); }, []);
+  useEffect(() => { fetchChildren(); }, [user?.id]);
 
   const fetchChildren = async () => {
     try {
@@ -44,20 +44,50 @@ export default function ParentChildren() {
         .select('*, section_students(sections(name, grade_levels(name)))')
         .in('id', studentIds);
 
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id')
+        .eq('is_current', true)
+        .maybeSingle();
+
       // Get grades and attendance for each
       const enriched = await Promise.all((students || []).map(async (student) => {
-        const [grades, attendance] = await Promise.all([
-          supabase.from('quarterly_grades').select('grade').eq('student_id', student.id).limit(20),
-          supabase.from('attendance_records').select('status').eq('student_id', student.id).limit(50),
+        let gradeQuery = supabase
+          .from('quarterly_grades')
+          .select('transmuted_grade')
+          .eq('student_id', student.id)
+          .eq('status', 'approved')
+          .limit(20);
+        let attendanceQuery = supabase
+          .from('attendance_records')
+          .select('status')
+          .eq('student_id', student.id)
+          .limit(50);
+        let enrollmentQuery = supabase
+          .from('enrollments')
+          .select('sections(name, grade_levels(name))')
+          .eq('student_id', student.id)
+          .maybeSingle();
+
+        if (activeYear?.id) {
+          gradeQuery = gradeQuery.eq('school_year_id', activeYear.id);
+          attendanceQuery = attendanceQuery.eq('school_year_id', activeYear.id);
+          enrollmentQuery = enrollmentQuery.eq('school_year_id', activeYear.id);
+        }
+
+        const [grades, attendance, enrollment] = await Promise.all([
+          gradeQuery,
+          attendanceQuery,
+          enrollmentQuery,
         ]);
 
-        const gradeValues = (grades.data || []).map(g => parseFloat(g.grade)).filter(g => !isNaN(g));
+        const gradeValues = (grades.data || []).map(g => parseFloat(g.transmuted_grade)).filter(g => !isNaN(g));
         const avgGrade = gradeValues.length > 0 ? (gradeValues.reduce((a, b) => a + b, 0) / gradeValues.length).toFixed(1) : 'N/A';
         const totalAtt = attendance.data?.length || 0;
         const presentAtt = attendance.data?.filter(a => a.status === 'present' || a.status === 'PRESENT').length || 0;
         const attRate = totalAtt > 0 ? Math.round((presentAtt / totalAtt) * 100) : 0;
 
-        const section = student.section_students?.[0]?.sections;
+        const section = enrollment.data?.sections || student.section_students?.[0]?.sections;
         return {
           ...student,
           sectionName: section?.name || 'N/A',

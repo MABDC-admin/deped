@@ -18,17 +18,33 @@ export default function TeacherClasses() {
 
   const fetchClasses = async () => {
     try {
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id')
+        .eq('is_current', true)
+        .maybeSingle();
+
       // Get teacher's sections (as adviser)
-      const { data: sections } = await supabase
+      let sectionsQuery = supabase
         .from('sections')
         .select('*, grade_levels(name), section_students(id, student_id)')
         .eq('adviser_id', user.id);
 
       // Get teacher's schedule
-      const { data: schedules } = await supabase
+      let schedulesQuery = supabase
         .from('class_schedules')
         .select('*, sections(name, grade_levels(name)), subjects(name)')
         .eq('teacher_id', user.id);
+
+      if (activeYear?.id) {
+        sectionsQuery = sectionsQuery.eq('school_year_id', activeYear.id);
+        schedulesQuery = schedulesQuery.eq('school_year_id', activeYear.id);
+      }
+
+      const [{ data: sections }, { data: schedules }] = await Promise.all([
+        sectionsQuery,
+        schedulesQuery,
+      ]);
 
       // Build advisory section IDs set for badge logic
       const advisorySectionIds = new Set((sections || []).map(s => s.id));
@@ -72,10 +88,12 @@ export default function TeacherClasses() {
       // Compute real attendance percentage
       let avgAttendance = 0;
       if (sectionIds.length > 0) {
-        const { data: attData } = await supabase
+        let attendanceQuery = supabase
           .from('attendance_records')
           .select('status')
           .in('section_id', sectionIds);
+        if (activeYear?.id) attendanceQuery = attendanceQuery.eq('school_year_id', activeYear.id);
+        const { data: attData } = await attendanceQuery;
 
         if (attData && attData.length > 0) {
           const presentCount = attData.filter(r => r.status === 'present' || r.status === 'late').length;
@@ -86,10 +104,12 @@ export default function TeacherClasses() {
       // Compute pending grades: sections × subjects that lack quarterly grades for any quarter
       let pendingGrades = 0;
       if (sectionIds.length > 0) {
-        const { data: qgData } = await supabase
+        let gradesQuery = supabase
           .from('quarterly_grades')
           .select('section_id, subject_id, quarter_id')
           .in('section_id', sectionIds);
+        if (activeYear?.id) gradesQuery = gradesQuery.eq('school_year_id', activeYear.id);
+        const { data: qgData } = await gradesQuery;
 
         // Count unique (section, subject) combos that have schedules
         const expectedCombos = new Set();

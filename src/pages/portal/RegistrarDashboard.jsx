@@ -61,7 +61,7 @@ export default function RegistrarDashboard() {
       const yearId = yearData?.id;
       setActiveYear(yearData);
 
-      const [enrollRes, sectionsRes, gradeLevelsRes, studentsRes] = await Promise.all([
+      const [enrollRes, sectionsRes, gradeLevelsRes] = await Promise.all([
         supabase.from('enrollments')
           .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(first_name, last_name, lrn, gender), grade_levels(name, level_order, category), sections(name)')
           .eq('school_year_id', yearId)
@@ -74,14 +74,12 @@ export default function RegistrarDashboard() {
           .select('id, name, level_order, category')
           .eq('is_active', true)
           .order('level_order'),
-        supabase.from('students')
-          .select('id', { count: 'exact', head: true }),
       ]);
 
       const enrollments = enrollRes.data || [];
       const sections = sectionsRes.data || [];
       const gradeLevels = gradeLevelsRes.data || [];
-      const totalStudents = studentsRes.count || 0;
+      const totalStudents = enrollments.filter(e => e.status === 'enrolled').length;
 
       const enrolled = enrollments.filter(e => e.status === 'enrolled').length;
       const pending = enrollments.filter(e => e.status === 'pending').length;

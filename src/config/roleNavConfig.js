@@ -75,7 +75,6 @@ export const roleNavConfig = {
         title: 'My Portal',
         items: [
           { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-          { label: 'Records Office', path: '/portal/registrar/records', icon: FileText },
           { label: 'My Classes', path: '/portal/teacher/classes', icon: BookOpen },
           { label: 'My Schedule', path: '/schedule', icon: Calendar },
           { label: 'Announcements', path: '/announcements', icon: Megaphone },
@@ -108,7 +107,6 @@ export const roleNavConfig = {
         title: 'Command Center',
         items: [
           { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-          { label: 'Records Office', path: '/portal/registrar/records', icon: FileText },
           { label: 'School Overview', path: '/portal/principal/overview', icon: School },
           { label: 'Announcements', path: '/announcements', icon: Megaphone },
         ]
@@ -143,7 +141,6 @@ export const roleNavConfig = {
         title: 'Wellness Center',
         items: [
           { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-          { label: 'Records Office', path: '/portal/registrar/records', icon: FileText },
           { label: 'Student Wellness', path: '/portal/guidance/wellness', icon: Heart },
           { label: 'Announcements', path: '/announcements', icon: Megaphone },
         ]
@@ -200,26 +197,10 @@ export const roleNavConfig = {
         title: 'Family',
         items: [
           { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-          { label: 'Records Office', path: '/portal/registrar/records', icon: FileText },
           { label: 'My Children', path: '/portal/parent/children', icon: Users },
           { label: 'Announcements', path: '/announcements', icon: Megaphone },
         ]
       },
-      {
-        title: 'Academic',
-        items: [
-          { label: 'Grades', path: '/grades/reports', icon: BarChart3 },
-          { label: 'Attendance', path: '/attendance', icon: UserCheck },
-          { label: 'Schedule', path: '/schedule', icon: Calendar },
-        ]
-      },
-      {
-        title: 'Finance',
-        items: [
-          { label: 'Fee Status', path: '/fees', icon: DollarSign },
-          { label: 'Payments', path: '/payments', icon: Receipt },
-        ]
-      }
     ]
   },
   
@@ -231,7 +212,6 @@ export const roleNavConfig = {
         title: 'My Portal',
         items: [
           { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-          { label: 'Records Office', path: '/portal/registrar/records', icon: FileText },
           { label: 'Announcements', path: '/announcements', icon: Megaphone },
         ]
       },
@@ -239,14 +219,6 @@ export const roleNavConfig = {
         title: 'Academics',
         items: [
           { label: 'My Grades', path: '/portal/student/grades', icon: BarChart3 },
-          { label: 'My Schedule', path: '/schedule', icon: Calendar },
-          { label: 'My Attendance', path: '/attendance', icon: UserCheck },
-        ]
-      },
-      {
-        title: 'Account',
-        items: [
-          { label: 'Fee Status', path: '/fees', icon: DollarSign },
         ]
       }
     ]

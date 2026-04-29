@@ -86,11 +86,17 @@ export default function SchoolYearList() {
     if (!form.year_name || !form.start_date || !form.end_date) { toast.error('Fill in required fields'); return }
     setSaving(true)
     const payload = { ...form, enrollment_start: form.enrollment_start || null, enrollment_end: form.enrollment_end || null, description: form.description || null }
+    const shouldSetCurrent = payload.is_current
+    const savePayload = shouldSetCurrent ? { ...payload, is_current: false } : payload
     let error
+    let saved
     if (editId) {
-      ({ error } = await supabase.from('school_years').update(payload).eq('id', editId))
+      ;({ data: saved, error } = await supabase.from('school_years').update(savePayload).eq('id', editId).select('id').single())
     } else {
-      ({ error } = await supabase.from('school_years').insert(payload))
+      ;({ data: saved, error } = await supabase.from('school_years').insert(savePayload).select('id').single())
+    }
+    if (!error && shouldSetCurrent && saved?.id) {
+      ;({ error } = await supabase.rpc('set_active_school_year', { p_school_year_id: saved.id }))
     }
     setSaving(false)
     if (error) { toast.error(error.message); return }
@@ -130,6 +136,11 @@ export default function SchoolYearList() {
       title: 'Complete School Year',
       message: 'Mark "' + row.year_name + '" as completed? You can still reactivate later.',
       fn: async () => {
+        if (row.is_current) {
+          toast.error('Activate another school year before completing the current one')
+          setConfirmAction(null)
+          return
+        }
         setActionLoading(true)
         const { error } = await supabase.from('school_years').update({ status: 'completed', is_current: false }).eq('id', row.id)
         setActionLoading(false)

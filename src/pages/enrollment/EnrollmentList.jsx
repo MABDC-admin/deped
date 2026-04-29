@@ -56,7 +56,11 @@ export default function EnrollmentList() {
       supabase.from('school_years').select('*').order('start_date', { ascending: false }),
     ])
     if (glRes.data) setGradeLevels(glRes.data)
-    if (syRes.data) setSchoolYears(syRes.data)
+    if (syRes.data) {
+      setSchoolYears(syRes.data)
+      const active = syRes.data.find(s => s.status === 'active' || s.is_current)
+      if (active && !filterSY) setFilterSY(active.id)
+    }
   }
 
   const fetchData = async () => {

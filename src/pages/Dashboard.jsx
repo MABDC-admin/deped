@@ -48,35 +48,54 @@ export default function Dashboard() {
   const [recentEnrollments, setRecentEnrollments] = useState([])
   const [announcements, setAnnouncements] = useState([])
   const [aiInsights, setAiInsights] = useState([])
+  const [activeYearName, setActiveYearName] = useState('')
 
   useEffect(() => { fetchDashboardData() }, [])
 
   const fetchDashboardData = async () => {
     try {
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id, year_name')
+        .eq('is_current', true)
+        .maybeSingle()
+      const yearId = activeYear?.id
+      setActiveYearName(activeYear?.year_name || '')
+
+      let sectionCountQuery = supabase.from('sections').select('*', { count: 'exact', head: true })
+      let enrollmentCountQuery = supabase.from('enrollments').select('*', { count: 'exact', head: true })
+      let enrollmentsQuery = supabase.from('enrollments').select('*, grade_levels(name), students(first_name, last_name, lrn, gender)').order('created_at', { ascending: false }).limit(10)
+      let attendanceQuery = supabase.from('attendance_records').select('status, date').order('date', { ascending: false }).limit(500)
+      let gradesQuery = supabase.from('quarterly_grades').select('transmuted_grade, subject_id')
+
+      if (yearId) {
+        sectionCountQuery = sectionCountQuery.eq('school_year_id', yearId)
+        enrollmentCountQuery = enrollmentCountQuery.eq('school_year_id', yearId)
+        enrollmentsQuery = enrollmentsQuery.eq('school_year_id', yearId)
+        attendanceQuery = attendanceQuery.eq('school_year_id', yearId)
+        gradesQuery = gradesQuery.eq('school_year_id', yearId)
+      }
+
       const [
-        { count: studentCount },
         { count: teacherCount },
         { count: sectionCount },
         { count: enrollmentCount },
-        { data: students },
         { data: enrollments },
         { data: attendanceData },
         { data: announcementData },
         { data: gradeData },
       ] = await Promise.all([
-        supabase.from('students').select('*', { count: 'exact', head: true }),
         supabase.from('teacher_profiles').select('*', { count: 'exact', head: true }),
-        supabase.from('sections').select('*', { count: 'exact', head: true }),
-        supabase.from('enrollments').select('*', { count: 'exact', head: true }),
-        supabase.from('students').select('gender'),
-        supabase.from('enrollments').select('*, grade_levels(name), students(first_name, last_name, lrn)').order('created_at', { ascending: false }).limit(10),
-        supabase.from('attendance').select('status, date').order('date', { ascending: false }).limit(500),
+        sectionCountQuery,
+        enrollmentCountQuery,
+        enrollmentsQuery,
+        attendanceQuery,
         supabase.from('announcements').select('*').order('created_at', { ascending: false }).limit(5),
-        supabase.from('quarterly_grades').select('grade, subject_id'),
+        gradesQuery,
       ])
 
-      const maleCount = students?.filter(s => s.gender === 'Male').length || 0
-      const femaleCount = students?.filter(s => s.gender === 'Female').length || 0
+      const maleCount = enrollments?.filter(e => e.students?.gender === 'Male').length || 0
+      const femaleCount = enrollments?.filter(e => e.students?.gender === 'Female').length || 0
 
       const enrolledCount = enrollments?.filter(e => e.status === 'enrolled').length || 0
       const pendingCount = enrollments?.filter(e => e.status === 'pending').length || 0
@@ -102,7 +121,7 @@ export default function Dashboard() {
       }))
 
       const insights = []
-      const avgGrade = gradeData?.length ? gradeData.reduce((sum, g) => sum + (g.grade || 0), 0) / gradeData.length : 0
+      const avgGrade = gradeData?.length ? gradeData.reduce((sum, g) => sum + (g.transmuted_grade || 0), 0) / gradeData.length : 0
       if (avgGrade > 0 && avgGrade < 80) {
         insights.push({ type: 'warning', icon: AlertTriangle, title: 'Grade Alert', message: `Average grade is ${avgGrade.toFixed(1)}% — below 80% target. Consider remedial programs.` })
       } else if (avgGrade >= 80) {
@@ -114,9 +133,9 @@ export default function Dashboard() {
       } else {
         insights.push({ type: 'success', icon: CheckCircle, title: 'Good Attendance', message: `Only ${absentRate.toFixed(1)}% absence rate. Attendance tracking is healthy.` })
       }
-      insights.push({ type: 'info', icon: Brain, title: 'AI Recommendation', message: `With ${studentCount || 0} students across ${sectionCount || 0} sections, optimal class size ratio is ${sectionCount ? Math.round((studentCount || 0) / sectionCount) : 0} students/section.` })
+      insights.push({ type: 'info', icon: Brain, title: 'AI Recommendation', message: `With ${enrollmentCount || 0} students across ${sectionCount || 0} sections, optimal class size ratio is ${sectionCount ? Math.round((enrollmentCount || 0) / sectionCount) : 0} students/section.` })
 
-      setStats({ students: studentCount || 0, teachers: teacherCount || 0, sections: sectionCount || 0, enrollments: enrollmentCount || 0, maleCount, femaleCount, enrolledCount, pendingCount, droppedCount })
+      setStats({ students: enrollmentCount || 0, teachers: teacherCount || 0, sections: sectionCount || 0, enrollments: enrollmentCount || 0, maleCount, femaleCount, enrolledCount, pendingCount, droppedCount })
       setEnrollmentByGrade(enrollByGrade)
       setAttendanceTrend(trend)
       setRecentEnrollments(enrollments?.slice(0, 5) || [])
@@ -143,7 +162,7 @@ export default function Dashboard() {
     { label: 'Total Students', value: stats.students, icon: GraduationCap, color: 'from-blue-600 to-blue-400', shadow: 'shadow-blue-500/25', glow: 'hover:shadow-neon-blue', trend: '+12%', trendUp: true },
     { label: 'Teachers', value: stats.teachers, icon: UserCheck, color: 'from-emerald-600 to-emerald-400', shadow: 'shadow-emerald-500/25', glow: 'hover:shadow-neon-green', trend: '+3', trendUp: true },
     { label: 'Sections', value: stats.sections, icon: BookOpen, color: 'from-amber-600 to-amber-400', shadow: 'shadow-amber-500/25', glow: 'hover:shadow-neon-amber', trend: 'Active', trendUp: true },
-    { label: 'Enrollments', value: stats.enrollments, icon: ClipboardList, color: 'from-purple-600 to-purple-400', shadow: 'shadow-purple-500/25', glow: 'hover:shadow-[0_0_20px_rgba(139,92,246,0.3)]', trend: 'SY 2025–2026', trendUp: true },
+    { label: 'Enrollments', value: stats.enrollments, icon: ClipboardList, color: 'from-purple-600 to-purple-400', shadow: 'shadow-purple-500/25', glow: 'hover:shadow-[0_0_20px_rgba(139,92,246,0.3)]', trend: activeYearName || 'Current SY', trendUp: true },
   ]
 
   const CustomTooltip = ({ active, payload, label }) => {

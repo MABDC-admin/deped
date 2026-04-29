@@ -11,26 +11,50 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user)
-        setRole(session.user.user_metadata?.role || 'user')
-      }
-      setLoading(false)
-    })
+    let mounted = true
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const getTrustedRole = async (sessionUser) => {
+      const appRole = sessionUser.app_metadata?.role
+      if (appRole) return appRole
+
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('id', sessionUser.id)
+        .maybeSingle()
+
+      if (error) {
+        console.error('Failed to load user role:', error)
+      }
+
+      return data?.role || 'user'
+    }
+
+    const applySession = async (session) => {
+      if (!mounted) return
+      setLoading(true)
       if (session?.user) {
         setUser(session.user)
-        setRole(session.user.user_metadata?.role || 'user')
+        setRole(await getTrustedRole(session.user))
       } else {
         setUser(null)
         setRole(null)
       }
-      setLoading(false)
+      if (mounted) setLoading(false)
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      applySession(session)
     })
 
-    return () => subscription.unsubscribe()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session)
+    })
+
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
   }, [])
 
   const login = async (email, password) => {

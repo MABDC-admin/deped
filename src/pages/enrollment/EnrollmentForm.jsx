@@ -104,7 +104,16 @@ export default function EnrollmentForm() {
       supabase.from('school_years').select('*').order('start_date', { ascending: false }),
     ])
     if (glRes.data) setGradeLevels(glRes.data)
-    if (syRes.data) setSchoolYears(syRes.data)
+    if (syRes.data) {
+      setSchoolYears(syRes.data)
+      const active = syRes.data.find(s => s.status === 'active' || s.is_current)
+      if (!isEdit && active) {
+        setFormData(prev => ({
+          ...prev,
+          enrollment: { ...prev.enrollment, school_year_id: prev.enrollment.school_year_id || active.id },
+        }))
+      }
+    }
   }
 
   useEffect(() => {

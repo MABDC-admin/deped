@@ -32,6 +32,44 @@ const rowVariants = {
   animate: (i) => ({ opacity: 1, x: 0, transition: { duration: 0.3, delay: Math.min(i, 10) * 0.05 } }),
 }
 
+const DEFAULT_WEIGHTS = { written_work: 0.30, performance_task: 0.50, quarterly_assessment: 0.20 }
+const SCIENCE_MATH_WEIGHTS = { written_work: 0.40, performance_task: 0.40, quarterly_assessment: 0.20 }
+const MAPEH_WEIGHTS = { written_work: 0.20, performance_task: 0.60, quarterly_assessment: 0.20 }
+
+function getWeights(subject) {
+  if (subject?.subject_group === 'science_math') return SCIENCE_MATH_WEIGHTS
+  if (subject?.subject_group === 'mapeh') return MAPEH_WEIGHTS
+  return DEFAULT_WEIGHTS
+}
+
+function buildComponentTotals(components, scores, studentId, weights) {
+  const totals = {
+    written_work: { score: 0, hps: 0 },
+    performance_task: { score: 0, hps: 0 },
+    quarterly_assessment: { score: 0, hps: 0 },
+  }
+
+  components.forEach(component => {
+    const type = component.component_type
+    if (!totals[type]) return
+    const key = `${component.id}_${studentId}`
+    totals[type].score += Number(scores[key]?.score || 0)
+    totals[type].hps += Number(component.total_score || 0)
+  })
+
+  const computed = {}
+  Object.entries(totals).forEach(([type, total]) => {
+    const percentage = total.hps > 0 ? (total.score / total.hps) * 100 : 0
+    computed[type] = {
+      ...total,
+      percentage,
+      weighted: percentage * (weights[type] || 0),
+    }
+  })
+
+  return computed
+}
+
 export default function GradeEntry() {
   const [schoolYears, setSchoolYears] = useState([])
   const [sections, setSections] = useState([])
@@ -50,10 +88,12 @@ export default function GradeEntry() {
 
   useEffect(() => {
     if (filters.section_id) fetchStudents()
+    else setStudents([])
   }, [filters.section_id])
 
   useEffect(() => {
     if (filters.section_id && filters.subject_id && filters.quarter_id) fetchComponents()
+    else { setComponents([]); setScores({}) }
   }, [filters.section_id, filters.subject_id, filters.quarter_id])
 
   const fetchInitialData = async () => {
@@ -67,6 +107,8 @@ export default function GradeEntry() {
     setSections(sec.data || [])
     setSubjects(sub.data || [])
     setQuarters(q.data || [])
+    const active = (sy.data || []).find(s => s.status === 'active' || s.is_current)
+    if (active) setFilters(prev => ({ ...prev, school_year_id: active.id }))
   }
 
   const fetchStudents = async () => {
@@ -109,11 +151,62 @@ export default function GradeEntry() {
         }, { onConflict: 'grade_component_id,student_id' })
         if (error) throw error
       }
+      await syncQuarterlyGrades()
       toast.success('Scores saved successfully!')
     } catch (err) {
       toast.error(err.message || 'Failed to save scores')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const syncQuarterlyGrades = async () => {
+    if (!filters.school_year_id || !filters.section_id || !filters.subject_id || !filters.quarter_id || components.length === 0) return
+
+    const subject = subjects.find(s => s.id === filters.subject_id)
+    const weights = getWeights(subject)
+
+    for (const enrollment of students) {
+      const studentId = enrollment.student_id
+      const totals = buildComponentTotals(components, scores, studentId, weights)
+      const initialGrade = Number((
+        totals.written_work.weighted +
+        totals.performance_task.weighted +
+        totals.quarterly_assessment.weighted
+      ).toFixed(2))
+
+      const { data: transmutedGrade, error: transmutationError } = await supabase
+        .rpc('get_transmuted_grade', { p_initial_grade: initialGrade })
+      if (transmutationError) throw transmutationError
+
+      const { data: descriptor, error: descriptorError } = await supabase
+        .rpc('get_grade_descriptor', { p_transmuted_grade: transmutedGrade })
+      if (descriptorError) throw descriptorError
+
+      const { error } = await supabase.from('quarterly_grades').upsert({
+        student_id: studentId,
+        section_id: filters.section_id,
+        subject_id: filters.subject_id,
+        quarter_id: filters.quarter_id,
+        school_year_id: filters.school_year_id,
+        ww_total_score: totals.written_work.score,
+        ww_hps: totals.written_work.hps,
+        ww_percentage: Number(totals.written_work.percentage.toFixed(2)),
+        ww_weighted: Number(totals.written_work.weighted.toFixed(2)),
+        pt_total_score: totals.performance_task.score,
+        pt_hps: totals.performance_task.hps,
+        pt_percentage: Number(totals.performance_task.percentage.toFixed(2)),
+        pt_weighted: Number(totals.performance_task.weighted.toFixed(2)),
+        qa_total_score: totals.quarterly_assessment.score,
+        qa_hps: totals.quarterly_assessment.hps,
+        qa_percentage: Number(totals.quarterly_assessment.percentage.toFixed(2)),
+        qa_weighted: Number(totals.quarterly_assessment.weighted.toFixed(2)),
+        initial_grade: initialGrade,
+        transmuted_grade: transmutedGrade,
+        descriptor,
+        status: 'draft',
+      }, { onConflict: 'student_id,subject_id,quarter_id' })
+      if (error) throw error
     }
   }
 
@@ -125,13 +218,13 @@ export default function GradeEntry() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             { label: 'School Year', value: filters.school_year_id, key: 'school_year_id', options: schoolYears.map(sy => ({ id: sy.id, label: sy.year_name })) },
-            { label: 'Section', value: filters.section_id, key: 'section_id', options: sections.map(s => ({ id: s.id, label: `${s.grade_levels?.name} - ${s.name}` })) },
+            { label: 'Section', value: filters.section_id, key: 'section_id', options: sections.filter(s => !filters.school_year_id || s.school_year_id === filters.school_year_id).map(s => ({ id: s.id, label: `${s.grade_levels?.name} - ${s.name}` })) },
             { label: 'Subject', value: filters.subject_id, key: 'subject_id', options: subjects.map(s => ({ id: s.id, label: s.name })) },
             { label: 'Quarter', value: filters.quarter_id, key: 'quarter_id', options: quarters.map(q => ({ id: q.id, label: q.name })) },
           ].map((filter, i) => (
             <motion.div key={filter.key} variants={dropdownVariants} custom={i} initial="initial" animate="animate">
               <label className="block text-sm font-medium text-gray-700 mb-1">{filter.label}</label>
-              <select value={filter.value} onChange={e => setFilters(p => ({...p, [filter.key]: e.target.value}))} className="input-field">
+              <select value={filter.value} onChange={e => setFilters(p => filter.key === 'school_year_id' ? {...p, school_year_id: e.target.value, section_id: ''} : {...p, [filter.key]: e.target.value})} className="input-field">
                 <option value="">Select...</option>
                 {filter.options.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
               </select>

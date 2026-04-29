@@ -76,36 +76,36 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<DashboardRouter />} />
-              <Route path="students" element={<StudentList />} />
-              <Route path="students/:id" element={<StudentDetail />} />
-              <Route path="enrollment" element={<EnrollmentList />} />
-              <Route path="enrollment/new" element={<EnrollmentForm />} />
-              <Route path="enrollment/:id" element={<EnrollmentDetail />} />
-              <Route path="enrollment/:id/edit" element={<EnrollmentForm />} />
-              <Route path="teachers" element={<TeacherList />} />
-              <Route path="sections" element={<SectionList />} />
-              <Route path="subjects" element={<SubjectList />} />
-              <Route path="grade-levels" element={<GradeLevelList />} />
-              <Route path="school-years" element={<SchoolYearList />} />
-              <Route path="school-years/promotions" element={<PromotionHistory />} />
+              <Route path="students" element={<RoleGuard allowed={["registrar","teacher","principal","guidance","cashier"]}><StudentList /></RoleGuard>} />
+              <Route path="students/:id" element={<RoleGuard allowed={["registrar","teacher","principal","guidance","cashier"]}><StudentDetail /></RoleGuard>} />
+              <Route path="enrollment" element={<RoleGuard allowed={["registrar"]}><EnrollmentList /></RoleGuard>} />
+              <Route path="enrollment/new" element={<RoleGuard allowed={["registrar"]}><EnrollmentForm /></RoleGuard>} />
+              <Route path="enrollment/:id" element={<RoleGuard allowed={["registrar"]}><EnrollmentDetail /></RoleGuard>} />
+              <Route path="enrollment/:id/edit" element={<RoleGuard allowed={["registrar"]}><EnrollmentForm /></RoleGuard>} />
+              <Route path="teachers" element={<RoleGuard allowed={["registrar","principal"]}><TeacherList /></RoleGuard>} />
+              <Route path="sections" element={<RoleGuard allowed={["registrar"]}><SectionList /></RoleGuard>} />
+              <Route path="subjects" element={<RoleGuard allowed={["registrar"]}><SubjectList /></RoleGuard>} />
+              <Route path="grade-levels" element={<RoleGuard allowed={["registrar"]}><GradeLevelList /></RoleGuard>} />
+              <Route path="school-years" element={<RoleGuard allowed={["registrar"]}><SchoolYearList /></RoleGuard>} />
+              <Route path="school-years/promotions" element={<RoleGuard allowed={["registrar"]}><PromotionHistory /></RoleGuard>} />
               <Route path="users" element={<RoleGuard allowed={["super_admin","registrar"]}><UserList /></RoleGuard>} />
               <Route path="grades/entry" element={<RoleGuard allowed={["super_admin","teacher","registrar"]}><GradeEntry /></RoleGuard>} />
-              <Route path="grades/reports" element={<GradeReport />} />
-              <Route path="attendance" element={<AttendanceList />} />
+              <Route path="grades/reports" element={<RoleGuard allowed={["teacher","registrar","principal"]}><GradeReport /></RoleGuard>} />
+              <Route path="attendance" element={<RoleGuard allowed={["teacher","registrar","principal","guidance"]}><AttendanceList /></RoleGuard>} />
               <Route path="fees" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><FeeList /></RoleGuard>} />
               <Route path="payments" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><PaymentList /></RoleGuard>} />
               <Route path="invoices" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><InvoiceList /></RoleGuard>} />
               <Route path="receipts" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><ReceiptList /></RoleGuard>} />
               <Route path="expenses" element={<RoleGuard allowed={["super_admin","cashier"]}><ExpenseList /></RoleGuard>} />
               <Route path="finance/reports" element={<RoleGuard allowed={["super_admin","cashier","principal"]}><FinanceReports /></RoleGuard>} />
-              <Route path="announcements" element={<AnnouncementList />} />
-              <Route path="schedule" element={<ClassSchedule />} />
+              <Route path="announcements" element={<RoleGuard allowed={["registrar","teacher","principal","guidance","cashier","parent","student"]}><AnnouncementList /></RoleGuard>} />
+              <Route path="schedule" element={<RoleGuard allowed={["registrar","teacher","principal","guidance"]}><ClassSchedule /></RoleGuard>} />
               <Route path="settings/school-info" element={<RoleGuard allowed={["super_admin","registrar"]}><SchoolInfo /></RoleGuard>} />
               <Route path="settings/system" element={<RoleGuard allowed={["super_admin","registrar"]}><SystemSettings /></RoleGuard>} />
               <Route path="audit-logs" element={<RoleGuard allowed={["super_admin","registrar"]}><AuditLog /></RoleGuard>} />
               <Route path="behavioral" element={<RoleGuard allowed={["super_admin","teacher","guidance","principal","registrar"]}><BehavioralList /></RoleGuard>} />
               <Route path="counseling" element={<RoleGuard allowed={["super_admin","guidance","principal","registrar","teacher"]}><CounselingList /></RoleGuard>} />
-              <Route path="notifications" element={<NotificationList />} />
+              <Route path="notifications" element={<RoleGuard allowed={["registrar","teacher","principal","guidance","cashier","parent","student"]}><NotificationList /></RoleGuard>} />
               {/* Portal Routes */}
               <Route path="portal/teacher/classes" element={<RoleGuard allowed={["teacher"]}><TeacherClasses /></RoleGuard>} />
               <Route path="portal/principal/overview" element={<RoleGuard allowed={["principal"]}><PrincipalOverview /></RoleGuard>} />
@@ -113,7 +113,7 @@ export default function App() {
               <Route path="portal/cashier/process" element={<RoleGuard allowed={["cashier"]}><CashierProcess /></RoleGuard>} />
               <Route path="portal/parent/children" element={<RoleGuard allowed={["parent"]}><ParentChildren /></RoleGuard>} />
               <Route path="portal/student/grades" element={<RoleGuard allowed={["student"]}><StudentGrades /></RoleGuard>} />
-              <Route path="portal/registrar/records" element={<RoleGuard allowed={["registrar","teacher"]}><RegistrarRecords /></RoleGuard>} />
+              <Route path="portal/registrar/records" element={<RoleGuard allowed={["registrar"]}><RegistrarRecords /></RoleGuard>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

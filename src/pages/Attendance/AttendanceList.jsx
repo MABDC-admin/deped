@@ -334,7 +334,7 @@ export default function AttendanceList() {
       .select('student_id, students(id, first_name, last_name, middle_name, lrn)')
       .eq('section_id', sectionId)
       .eq('school_year_id', bulkSY)
-      .eq('status', 'active')
+      .eq('status', 'enrolled')
       .order('students(last_name)')
 
     if (error) { toast.error('Failed to load students'); console.error(error) }
@@ -400,7 +400,7 @@ export default function AttendanceList() {
         .select('student_id, students(id, first_name, last_name, lrn)')
         .eq('section_id', formSection)
         .eq('school_year_id', formSY)
-        .eq('status', 'active')
+        .eq('status', 'enrolled')
       setFormStudents(data || [])
     }
     load()

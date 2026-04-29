@@ -30,12 +30,38 @@ export default function CashierProcess() {
 
   const fetchData = async () => {
     try {
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id')
+        .eq('is_current', true)
+        .maybeSingle();
+      const yearId = activeYear?.id;
+
+      let paymentsQuery = supabase
+        .from('payments')
+        .select('*, students(first_name, last_name, lrn), student_fees!inner(school_year_id)')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      let feesQuery = supabase.from('student_fees').select('balance, student_id');
+      let outstandingQuery = supabase
+        .from('student_fees')
+        .select('*, students(first_name, last_name, lrn, enrollments(grade_levels(name), sections(name)))')
+        .gt('balance', 0)
+        .order('balance', { ascending: false })
+        .limit(10);
+
+      if (yearId) {
+        paymentsQuery = paymentsQuery.eq('student_fees.school_year_id', yearId);
+        feesQuery = feesQuery.eq('school_year_id', yearId);
+        outstandingQuery = outstandingQuery.eq('school_year_id', yearId);
+      }
+
       const [payments, fees, students, feeTypesRes, studentFees] = await Promise.all([
-        supabase.from('payments').select('*, students(first_name, last_name, lrn)').order('created_at', { ascending: false }).limit(20),
-        supabase.from('student_fees').select('balance, student_id'),
+        paymentsQuery,
+        feesQuery,
         supabase.from('students').select('id', { count: 'exact', head: true }),
         supabase.from('fee_types').select('*').eq('is_active', true).order('name'),
-        supabase.from('student_fees').select('*, students(first_name, last_name, lrn, enrollments(grade_levels(name), sections(name)))').gt('balance', 0).order('balance', { ascending: false }).limit(10),
+        outstandingQuery,
       ]);
 
       const paymentData = payments.data || [];

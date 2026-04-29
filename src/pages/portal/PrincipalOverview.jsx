@@ -14,12 +14,30 @@ export default function PrincipalOverview() {
 
   const fetchStats = async () => {
     try {
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id')
+        .eq('is_current', true)
+        .maybeSingle();
+      const yearId = activeYear?.id;
+
+      let studentsQuery = supabase.from('enrollments').select('id', { count: 'exact', head: true });
+      let sectionsQuery = supabase.from('sections').select('id', { count: 'exact', head: true });
+      let attendanceQuery = supabase.from('attendance_records').select('status').limit(500);
+      let paymentsQuery = supabase.from('payments').select('amount, student_fees!inner(school_year_id)');
+      if (yearId) {
+        studentsQuery = studentsQuery.eq('school_year_id', yearId).eq('status', 'enrolled');
+        sectionsQuery = sectionsQuery.eq('school_year_id', yearId);
+        attendanceQuery = attendanceQuery.eq('school_year_id', yearId);
+        paymentsQuery = paymentsQuery.eq('student_fees.school_year_id', yearId);
+      }
+
       const [students, teachers, sections, attendance, payments, behavioral] = await Promise.all([
-        supabase.from('students').select('id', { count: 'exact', head: true }),
+        studentsQuery,
         supabase.from('teacher_profiles').select('id', { count: 'exact', head: true }),
-        supabase.from('sections').select('id', { count: 'exact', head: true }),
-        supabase.from('attendance_records').select('status').limit(500),
-        supabase.from('payments').select('amount'),
+        sectionsQuery,
+        attendanceQuery,
+        paymentsQuery,
         supabase.from('behavioral_incidents').select('severity').limit(100),
       ]);
 

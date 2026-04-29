@@ -12,7 +12,7 @@ export default function StudentGrades() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { fetchGrades(); }, []);
+  useEffect(() => { fetchGrades(); }, [user?.id]);
 
   const fetchGrades = async () => {
     try {
@@ -28,11 +28,22 @@ export default function StudentGrades() {
         return;
       }
 
-      const { data: gradeData } = await supabase
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id')
+        .eq('is_current', true)
+        .maybeSingle();
+
+      let gradeQuery = supabase
         .from('quarterly_grades')
         .select('*, subjects(name), quarters(name, quarter_number)')
         .eq('student_id', student.id)
+        .eq('status', 'approved')
         .order('created_at', { ascending: false });
+
+      if (activeYear?.id) gradeQuery = gradeQuery.eq('school_year_id', activeYear.id);
+
+      const { data: gradeData } = await gradeQuery;
 
       // Group by subject
       const subjectMap = {};
@@ -42,7 +53,7 @@ export default function StudentGrades() {
           subjectMap[subjectName] = { name: subjectName, quarters: {} };
         }
         const qNum = g.quarters?.quarter_number || 0;
-        subjectMap[subjectName].quarters[qNum] = parseFloat(g.grade) || 0;
+        subjectMap[subjectName].quarters[qNum] = parseFloat(g.transmuted_grade) || 0;
       });
 
       const subjectGrades = Object.values(subjectMap).map(s => {

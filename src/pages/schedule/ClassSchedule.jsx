@@ -5,8 +5,14 @@ import GlassCard from '../../components/ui/GlassCard';
 import SkeletonLoader from '../../components/ui/SkeletonLoader';
 import EmptyState from '../../components/ui/EmptyState';
 
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-const TIME_SLOTS = ['7:00', '7:30', '8:00', '8:30', '9:00', '9:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '1:00', '1:30', '2:00', '2:30', '3:00', '3:30', '4:00'];
+const DAYS = [
+  { value: 1, label: 'Monday' },
+  { value: 2, label: 'Tuesday' },
+  { value: 3, label: 'Wednesday' },
+  { value: 4, label: 'Thursday' },
+  { value: 5, label: 'Friday' },
+];
+const TIME_SLOTS = ['07:00', '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00'];
 const SUBJECT_COLORS = [
   'bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700',
   'bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700',
@@ -30,9 +36,29 @@ const ClassSchedule = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id')
+        .eq('is_current', true)
+        .maybeSingle();
+
+      let schedulesQuery = supabase
+        .from('class_schedules')
+        .select('*, sections(name, grade_levels(name)), subjects(name, short_name), teacher:teacher_profiles(user_id, user_profiles(first_name, last_name))')
+        .order('day_of_week');
+      let sectionsQuery = supabase
+        .from('sections')
+        .select('id, name, school_year_id, grade_levels(name)')
+        .order('name');
+
+      if (activeYear?.id) {
+        schedulesQuery = schedulesQuery.eq('school_year_id', activeYear.id);
+        sectionsQuery = sectionsQuery.eq('school_year_id', activeYear.id);
+      }
+
       const [schedRes, secRes] = await Promise.all([
-        supabase.from('class_schedules').select('*, sections(name, grade_levels(name)), subjects(name, code), teacher:teacher_profiles(user_id, user_profiles(first_name, last_name))').order('day_of_week'),
-        supabase.from('sections').select('id, name, grade_levels(name)').order('name'),
+        schedulesQuery,
+        sectionsQuery,
       ]);
       setSchedules(schedRes.data || []);
       setSections(secRes.data || []);
@@ -54,7 +80,7 @@ const ClassSchedule = () => {
 
   const getScheduleForSlot = (day, time) => {
     return filteredSchedules.filter(s => {
-      if (s.day_of_week !== day) return false;
+      if (Number(s.day_of_week) !== day) return false;
       const startTime = s.start_time?.slice(0, 5);
       const endTime = s.end_time?.slice(0, 5);
       return startTime <= time && endTime > time;
@@ -118,7 +144,7 @@ const ClassSchedule = () => {
             <div className="grid grid-cols-6 gap-1 mb-2">
               <div className="text-xs font-semibold text-gray-400 text-center py-2">Time</div>
               {DAYS.map(day => (
-                <div key={day} className="text-xs font-semibold text-gray-700 dark:text-gray-300 text-center py-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg">{day}</div>
+                <div key={day.value} className="text-xs font-semibold text-gray-700 dark:text-gray-300 text-center py-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg">{day.label}</div>
               ))}
             </div>
 
@@ -129,12 +155,12 @@ const ClassSchedule = () => {
                   className="grid grid-cols-6 gap-1" style={{ minHeight: '2.5rem' }}>
                   <div className="text-xs text-gray-400 flex items-center justify-center">{time}</div>
                   {DAYS.map(day => {
-                    const slots = getScheduleForSlot(day, time);
+                    const slots = getScheduleForSlot(day.value, time);
                     return (
-                      <div key={`${day}-${time}`} className="relative rounded-lg overflow-hidden min-h-[2.5rem]">
+                      <div key={`${day.value}-${time}`} className="relative rounded-lg overflow-hidden min-h-[2.5rem]">
                         {slots.map((slot, si) => (
                           <div key={si} className={`absolute inset-0 px-2 py-1 text-xs border-l-3 ${subjectColorMap[slot.subject_id] || SUBJECT_COLORS[0]} flex flex-col justify-center`}>
-                            <span className="font-semibold truncate">{slot.subjects?.code || slot.subjects?.name}</span>
+                            <span className="font-semibold truncate">{slot.subjects?.short_name || slot.subjects?.name}</span>
                             {slot.teacher?.user_profiles && (
                               <span className="text-[10px] opacity-70 truncate">{slot.teacher.user_profiles.last_name}</span>
                             )}

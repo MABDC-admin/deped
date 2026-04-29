@@ -105,7 +105,7 @@ export default function StudentList() {
   useEffect(() => {
     const loadAll = async () => {
       const [studRes, glRes, secRes] = await Promise.all([
-        supabase.from('students').select('*, enrollments(status, grade_levels(id, name), sections(id, name))').order('last_name'),
+        supabase.from('students').select('*, enrollments(status, school_year_id, created_at, school_years(is_current, start_date), grade_levels(id, name), sections(id, name))').order('last_name'),
         supabase.from('grade_levels').select('id, name, level_order').order('level_order'),
         supabase.from('sections').select('id, name, grade_level_id').order('name'),
       ])
@@ -122,7 +122,7 @@ export default function StudentList() {
     setLoading(true)
     const { data: rows, error } = await supabase
       .from('students')
-      .select('*, enrollments(status, grade_levels(id, name), sections(id, name))')
+      .select('*, enrollments(status, school_year_id, created_at, school_years(is_current, start_date), grade_levels(id, name), sections(id, name))')
       .order('last_name')
     if (error) toast.error('Failed to load data')
     else setData(rows || [])
@@ -131,7 +131,13 @@ export default function StudentList() {
 
   const getLatestEnrollment = (row) => {
     if (!row.enrollments || row.enrollments.length === 0) return null
-    return row.enrollments[0]
+    const current = row.enrollments.find(e => e.school_years?.is_current)
+    if (current) return current
+    return [...row.enrollments].sort((a, b) => {
+      const aDate = a.school_years?.start_date || a.created_at || ''
+      const bDate = b.school_years?.start_date || b.created_at || ''
+      return bDate.localeCompare(aDate)
+    })[0]
   }
 
   // Filtered + sorted data

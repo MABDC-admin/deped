@@ -6,7 +6,7 @@ export default function RoleGuard({ allowedRoles, children }) {
   
   if (loading) return null;
   
-  if (!allowedRoles.includes(role)) {
+  if (role !== 'super_admin' && !allowedRoles.includes(role)) {
     return <Navigate to="/" replace />;
   }
   

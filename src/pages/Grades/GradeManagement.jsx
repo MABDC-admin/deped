@@ -23,6 +23,8 @@ const getRemarkInfo = (grade) => {
   return REMARKS.didNotMeet;
 };
 
+const getGradeValue = (grade) => Number(grade.transmuted_grade ?? grade.initial_grade ?? 0);
+
 const GradeManagement = () => {
   const [grades, setGrades] = useState([]);
   const [students, setStudents] = useState([]);
@@ -41,7 +43,7 @@ const GradeManagement = () => {
     setLoading(true);
     try {
       const [gradesRes, studentsRes, sectionsRes, subjectsRes] = await Promise.all([
-        supabase.from('quarterly_grades').select('*, students(first_name, last_name, lrn, section_id), subjects(name, code)'),
+        supabase.from('quarterly_grades').select('*, students(first_name, last_name, lrn, section_id), subjects(name, short_name)'),
         supabase.from('students').select('id, first_name, last_name, lrn, section_id, sections(name, grade_levels(name))').eq('status', 'active'),
         supabase.from('sections').select('id, name, grade_levels(name)').order('name'),
         supabase.from('subjects').select('id, name, code').order('name'),
@@ -71,7 +73,8 @@ const GradeManagement = () => {
   // Stats
   const stats = useMemo(() => {
     if (filteredGrades.length === 0) return { avg: 0, passing: 0, failing: 0, highest: 0, lowest: 0 };
-    const gradeValues = filteredGrades.map(g => g.grade);
+    const gradeValues = filteredGrades.map(getGradeValue).filter(g => g > 0);
+    if (gradeValues.length === 0) return { avg: 0, passing: 0, failing: 0, highest: 0, lowest: 0 };
     return {
       avg: (gradeValues.reduce((a, b) => a + b, 0) / gradeValues.length).toFixed(1),
       passing: gradeValues.filter(g => g >= 75).length,
@@ -85,10 +88,11 @@ const GradeManagement = () => {
   const distribution = useMemo(() => {
     const dist = { outstanding: 0, verySatisfactory: 0, satisfactory: 0, fairlySatisfactory: 0, didNotMeet: 0 };
     filteredGrades.forEach(g => {
-      if (g.grade >= 90) dist.outstanding++;
-      else if (g.grade >= 85) dist.verySatisfactory++;
-      else if (g.grade >= 80) dist.satisfactory++;
-      else if (g.grade >= 75) dist.fairlySatisfactory++;
+      const value = getGradeValue(g);
+      if (value >= 90) dist.outstanding++;
+      else if (value >= 85) dist.verySatisfactory++;
+      else if (value >= 80) dist.satisfactory++;
+      else if (value >= 75) dist.fairlySatisfactory++;
       else dist.didNotMeet++;
     });
     return dist;
@@ -179,12 +183,13 @@ const GradeManagement = () => {
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                       {filteredGrades.slice(0, 100).map((grade, i) => {
-                        const remark = getRemarkInfo(grade.grade);
+                        const gradeValue = getGradeValue(grade);
+                        const remark = getRemarkInfo(gradeValue);
                         // Gather all grades for this student+subject for prediction
                         const studentSubjectGrades = grades
                           .filter(g => g.student_id === grade.student_id && g.subject_id === grade.subject_id)
                           .sort((a, b) => a.quarter - b.quarter)
-                          .map(g => g.grade);
+                          .map(getGradeValue);
                         const prediction = predictFinalGrade(studentSubjectGrades);
 
                         return (
@@ -210,8 +215,8 @@ const GradeManagement = () => {
                               </span>
                             </td>
                             <td className="px-4 py-3">
-                              <span className={`text-lg font-bold ${grade.grade >= 75 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                                {grade.grade}
+                              <span className={`text-lg font-bold ${gradeValue >= 75 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                {grade.initial_grade ?? '—'}
                               </span>
                             </td>
                             <td className="px-4 py-3">
@@ -265,8 +270,8 @@ const GradeManagement = () => {
                   {subjects.map(subject => {
                     const subjectGrades = filteredGrades.filter(g => g.subject_id === subject.id);
                     if (subjectGrades.length === 0) return null;
-                    const avg = subjectGrades.reduce((a, b) => a + b.grade, 0) / subjectGrades.length;
-                    const passingRate = (subjectGrades.filter(g => g.grade >= 75).length / subjectGrades.length * 100);
+                    const avg = subjectGrades.reduce((a, b) => a + getGradeValue(b), 0) / subjectGrades.length;
+                    const passingRate = (subjectGrades.filter(g => getGradeValue(g) >= 75).length / subjectGrades.length * 100);
                     return (
                       <div key={subject.id} className="space-y-1.5">
                         <div className="flex justify-between items-center">
@@ -300,7 +305,7 @@ const GradeManagement = () => {
                   {students.slice(0, 10).map(student => {
                     const studentGrades = grades.filter(g => g.student_id === student.id).sort((a, b) => a.quarter - b.quarter);
                     if (studentGrades.length === 0) return null;
-                    const avgGrades = studentGrades.map(g => g.grade);
+                    const avgGrades = studentGrades.map(getGradeValue);
                     const prediction = predictFinalGrade(avgGrades);
                     if (!prediction) return null;
                     return (
