@@ -8,6 +8,37 @@ import EmptyState from '../../components/ui/EmptyState';
 import { SkeletonDashboard, SkeletonTable } from '../../components/ui/SkeletonLoader';
 import toast from 'react-hot-toast';
 
+const gradeSortValue = (gradeLevel) => {
+  const explicitOrder = Number(gradeLevel?.level_order);
+  if (Number.isFinite(explicitOrder)) return explicitOrder;
+
+  const name = String(gradeLevel?.name || '').toLowerCase();
+  if (name.includes('kindergarten') || name.includes('kinder')) return 0;
+  if (name.includes('nursery')) return -2;
+  if (name.includes('pre-k')) return -1;
+
+  const match = name.match(/grade\s*(\d+)/);
+  if (match) return Number(match[1]);
+
+  return 999;
+};
+
+const compareGradeLevels = (a, b) => {
+  const orderDiff = gradeSortValue(a) - gradeSortValue(b);
+  if (orderDiff !== 0) return orderDiff;
+  return String(a?.name || '').localeCompare(String(b?.name || ''));
+};
+
+const compareFeeStructures = (a, b) => {
+  const gradeDiff = compareGradeLevels(a.grade_levels, b.grade_levels);
+  if (gradeDiff !== 0) return gradeDiff;
+
+  const feeDiff = String(a.fee_types?.name || '').localeCompare(String(b.fee_types?.name || ''));
+  if (feeDiff !== 0) return feeDiff;
+
+  return new Date(a.due_date || 0) - new Date(b.due_date || 0);
+};
+
 export default function FeeList() {
   const [activeTab, setActiveTab] = useState('types');
   const [loading, setLoading] = useState(true);
@@ -67,7 +98,7 @@ export default function FeeList() {
   const filteredStructures = feeStructures.filter(f =>
     f.fee_types?.name?.toLowerCase().includes(search.toLowerCase()) ||
     f.grade_levels?.name?.toLowerCase().includes(search.toLowerCase())
-  );
+  ).sort(compareFeeStructures);
   const filteredDiscounts = discounts.filter(d => d.name?.toLowerCase().includes(search.toLowerCase()));
 
   // Fee structure matrix
@@ -82,7 +113,7 @@ export default function FeeList() {
         matrix[fs.grade_level_id].fees[fs.fee_type_id] = fs;
       }
     });
-    return Object.values(matrix);
+    return Object.values(matrix).sort((a, b) => compareGradeLevels(a.gradeLevel, b.gradeLevel));
   }, [gradeLevels, feeTypes, feeStructures]);
 
   // CRUD handlers
