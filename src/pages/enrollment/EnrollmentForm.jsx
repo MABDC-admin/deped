@@ -271,6 +271,25 @@ export default function EnrollmentForm() {
     })
   }
 
+  const generateLrn = async (schoolYearId) => {
+    const selectedYear = schoolYears.find(y => y.id === schoolYearId)
+    const prefix = (selectedYear?.year_name?.match(/\d{4}/)?.[0]) || new Date().getFullYear().toString()
+
+    const { data, error } = await supabase
+      .from('students')
+      .select('lrn')
+      .like('lrn', `${prefix}-%`)
+      .order('lrn', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) throw error
+
+    const latestNumber = data?.lrn ? Number.parseInt(data.lrn.split('-').pop(), 10) : 0
+    const nextNumber = Number.isFinite(latestNumber) ? latestNumber + 1 : 1
+    return `${prefix}-${String(nextNumber).padStart(6, '0')}`
+  }
+
   const calcAge = useMemo(() => {
     if (!formData.student.birth_date) return ''
     const today = new Date()
@@ -312,6 +331,9 @@ export default function EnrollmentForm() {
     setSaving(true)
     try {
       const studentPayload = { ...formData.student }
+      if (!studentPayload.lrn?.trim()) {
+        studentPayload.lrn = await generateLrn(formData.enrollment.school_year_id)
+      }
       Object.keys(studentPayload).forEach(k => { if (studentPayload[k] === '') studentPayload[k] = null })
 
       let studentId = existingStudentId
@@ -477,8 +499,9 @@ export default function EnrollmentForm() {
       <SectionHeader icon={School} title="Learner Reference & School Info" />
       <motion.div className="grid grid-cols-1 md:grid-cols-2 gap-4" variants={fieldGroupVariants} initial="initial" animate="animate">
         <motion.div variants={fieldVariants}>
-          <label className="block text-sm font-medium text-gray-700 mb-1">LRN (Learner Reference Number)</label>
-          <input type="text" className="input-field" maxLength={12} placeholder="12-digit LRN" value={formData.student.lrn} onChange={e => updateStudent('lrn', e.target.value)} />
+          <label className="block text-sm font-medium text-gray-700 mb-1">LRN / Student No.</label>
+          <input type="text" className="input-field" placeholder="Leave blank to auto-generate" value={formData.student.lrn} onChange={e => updateStudent('lrn', e.target.value)} />
+          <p className="text-xs text-gray-500 mt-1">Blank entries are assigned the next number for the selected school year.</p>
         </motion.div>
         <motion.div variants={fieldVariants}>
           <label className="block text-sm font-medium text-gray-700 mb-1">PSA Birth Certificate No.</label>
@@ -882,7 +905,7 @@ export default function EnrollmentForm() {
           <motion.div className="bg-green-50 border border-green-200 rounded-lg p-4" variants={fieldVariants}>
             <h4 className="font-semibold text-green-800 mb-2">School Information</h4>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-              <div><span className="text-gray-500">LRN:</span> <span className="font-medium">{s.lrn || 'N/A'}</span></div>
+              <div><span className="text-gray-500">LRN:</span> <span className="font-medium">{s.lrn || 'Auto assigned on save'}</span></div>
               <div><span className="text-gray-500">Grade Level:</span> <span className="font-medium">{glName ? glName.name : 'N/A'}</span></div>
               <div><span className="text-gray-500">School Year:</span> <span className="font-medium">{syName ? syName.year_name : 'N/A'}</span></div>
               <div><span className="text-gray-500">Type:</span> <span className="font-medium capitalize">{en.enrollment_type}</span></div>
