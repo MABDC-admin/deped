@@ -62,6 +62,28 @@ export default function CashierProcess() {
     }
   };
 
+  const fetchEnrollmentMap = async (studentIds, schoolYearId) => {
+    const ids = [...new Set((studentIds || []).filter(Boolean))];
+    if (ids.length === 0 || !schoolYearId) return {};
+
+    const { data, error } = await supabase
+      .from('enrollments')
+      .select('student_id, grade_levels(name), sections(name)')
+      .eq('school_year_id', schoolYearId)
+      .eq('status', 'enrolled')
+      .in('student_id', ids);
+
+    if (error) {
+      console.error(error);
+      return {};
+    }
+
+    return (data || []).reduce((map, enrollment) => {
+      map[enrollment.student_id] = enrollment;
+      return map;
+    }, {});
+  };
+
   const fetchData = async (schoolYearId = selectedSY) => {
     if (!schoolYearId) return;
     setLoading(true);
@@ -78,7 +100,7 @@ export default function CashierProcess() {
         .eq('school_year_id', schoolYearId);
       const outstandingQuery = supabase
         .from('student_fees')
-        .select('*, students(first_name, last_name, lrn, enrollments(grade_levels(name), sections(name)))')
+        .select('*, students(id, first_name, last_name, lrn)')
         .eq('school_year_id', schoolYearId)
         .gt('balance', 0)
         .order('balance', { ascending: false })
@@ -103,6 +125,15 @@ export default function CashierProcess() {
       const todayTotal = todayPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
       const totalCollected = paymentData.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
       const totalBalance = (fees.data || []).reduce((sum, f) => sum + (parseFloat(f.balance) || 0), 0);
+      const studentFeeData = studentFees.data || [];
+      const enrollmentMap = await fetchEnrollmentMap(studentFeeData.map(sf => sf.student_id), schoolYearId);
+      const outstandingForYear = studentFeeData.map(sf => ({
+        ...sf,
+        students: sf.students ? {
+          ...sf.students,
+          enrollments: enrollmentMap[sf.student_id] ? [enrollmentMap[sf.student_id]] : [],
+        } : sf.students,
+      }));
 
       setStats({
         todayTotal,
@@ -114,7 +145,7 @@ export default function CashierProcess() {
       });
       setRecentPayments(paymentData.slice(0, 10));
       setFeeTypes(feeTypesRes.data || []);
-      setOutstandingStudents(studentFees.data || []);
+      setOutstandingStudents(outstandingForYear);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load dashboard data');
@@ -128,13 +159,43 @@ export default function CashierProcess() {
     if (!searchQuery || searchQuery.length < 2 || !selectedSY) { setSearchResults([]); return; }
     const timer = setTimeout(async () => {
       setSearching(true);
-      const { data } = await supabase.from('students')
-        .select('id, first_name, last_name, lrn, enrollments!inner(school_year_id, status, grade_levels(name), sections(name))')
-        .eq('enrollments.school_year_id', selectedSY)
-        .eq('enrollments.status', 'enrolled')
-        .or(`first_name.ilike.%${searchQuery}%,last_name.ilike.%${searchQuery}%,lrn.ilike.%${searchQuery}%`)
-        .limit(8);
-      setSearchResults(data || []);
+      const { data, error } = await supabase
+        .from('student_fees')
+        .select('student_id, students(id, first_name, last_name, lrn)')
+        .eq('school_year_id', selectedSY)
+        .gt('balance', 0)
+        .limit(500);
+
+      if (error) {
+        console.error(error);
+        toast.error('Failed to search students');
+        setSearchResults([]);
+        setSearching(false);
+        return;
+      }
+
+      const q = searchQuery.toLowerCase();
+      const uniqueStudents = [];
+      const seen = new Set();
+      (data || []).forEach(row => {
+        const student = row.students;
+        if (!student || seen.has(student.id)) return;
+        seen.add(student.id);
+        uniqueStudents.push(student);
+      });
+      const matchedStudents = uniqueStudents
+        .filter(student => {
+          const name = `${student.first_name || ''} ${student.last_name || ''}`.toLowerCase();
+          const reverseName = `${student.last_name || ''} ${student.first_name || ''}`.toLowerCase();
+          const lrn = (student.lrn || '').toLowerCase();
+          return name.includes(q) || reverseName.includes(q) || lrn.includes(q);
+        })
+        .slice(0, 8);
+      const enrollmentMap = await fetchEnrollmentMap(matchedStudents.map(s => s.id), selectedSY);
+      setSearchResults(matchedStudents.map(student => ({
+        ...student,
+        enrollments: enrollmentMap[student.id] ? [enrollmentMap[student.id]] : [],
+      })));
       setSearching(false);
     }, 300);
     return () => clearTimeout(timer);
