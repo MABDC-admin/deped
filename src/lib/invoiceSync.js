@@ -66,6 +66,30 @@ export async function getStudentFeeForInvoice(supabase, studentId, schoolYearId)
   return data || null
 }
 
+export async function updateStudentFeeFromInvoice(supabase, studentFee, { totalAmount, discountAmount }) {
+  if (!studentFee?.id) return { data: null, error: null }
+
+  const totalFees = numeric(totalAmount)
+  const totalDiscount = numeric(discountAmount)
+  const totalPaid = numeric(studentFee.total_paid)
+  const projectedBalance = Math.max(totalFees - totalDiscount - totalPaid, 0)
+  const status = projectedBalance <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid'
+
+  const { data, error } = await supabase
+    .from('student_fees')
+    .update({
+      total_fees: totalFees,
+      total_discount: totalDiscount,
+      status,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', studentFee.id)
+    .select('id, student_id, school_year_id, total_fees, total_discount, total_paid, balance, status, created_at, updated_at')
+    .single()
+
+  return { data, error }
+}
+
 export async function syncInvoiceFromStudentFee(
   supabase,
   { studentFee, studentId, schoolYearId, generatedBy = null, dueDate = null, notes = undefined, invoiceId = null } = {}

@@ -26,6 +26,7 @@ import {
   getStudentFeeForInvoice,
   invoiceFieldsFromStudentFee,
   syncInvoiceFromStudentFee,
+  updateStudentFeeFromInvoice,
 } from '../../lib/invoiceSync';
 import toast from 'react-hot-toast';
 import GlassCard from '../../components/ui/GlassCard';
@@ -345,8 +346,25 @@ const InvoiceList = () => {
       const linkedStudentFee = await getStudentFeeForInvoice(supabase, form.student_id, form.school_year_id);
 
       if (linkedStudentFee) {
+        const totalAmount = parseFloat(form.total_amount) || 0;
+        const discountAmount = parseFloat(form.discount_amount) || 0;
+        if (totalAmount <= 0) {
+          toast.error('Total amount must be greater than zero');
+          return;
+        }
+        if (discountAmount < 0 || discountAmount > totalAmount) {
+          toast.error('Discount must be between zero and the total amount');
+          return;
+        }
+
+        const { data: updatedStudentFee, error: studentFeeError } = await updateStudentFeeFromInvoice(supabase, linkedStudentFee, {
+          totalAmount,
+          discountAmount,
+        });
+        if (studentFeeError) throw studentFeeError;
+
         const { error } = await syncInvoiceFromStudentFee(supabase, {
-          studentFee: linkedStudentFee,
+          studentFee: updatedStudentFee || linkedStudentFee,
           studentId: form.student_id,
           schoolYearId: form.school_year_id,
           generatedBy: user?.id || null,
