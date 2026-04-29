@@ -1,4 +1,5 @@
 const numeric = (value) => parseFloat(value || 0) || 0
+const isSettled = (balance) => numeric(balance) <= 0.005
 
 export const defaultInvoiceDueDate = (baseDate = new Date()) => {
   const date = new Date(baseDate || new Date())
@@ -23,7 +24,7 @@ export const invoiceStatusFromStudentFee = (studentFee) => {
     0
   )
 
-  if (netAmount > 0 && balance <= 0) return 'paid'
+  if (netAmount > 0 && isSettled(balance)) return 'paid'
   if (amountPaid > 0) return 'partial'
   return studentFee?.status && studentFee.status !== 'paid' ? studentFee.status : 'unpaid'
 }
@@ -79,7 +80,7 @@ export async function updateStudentFeeFromInvoice(supabase, studentFee, { totalA
     }
   }
   const projectedBalance = Math.max(totalFees - totalDiscount - totalPaid, 0)
-  const status = projectedBalance <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid'
+  const status = isSettled(projectedBalance) ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid'
 
   const { data, error } = await supabase
     .from('student_fees')

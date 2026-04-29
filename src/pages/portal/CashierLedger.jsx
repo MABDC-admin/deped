@@ -67,6 +67,9 @@ const formatPaymentMethod = (value) =>
     .replace(/_/g, ' ')
     .replace(/\b\w/g, char => char.toUpperCase())
 
+const formatAccountStatus = (status) =>
+  status === 'paid' ? 'Fully Paid' : formatPaymentMethod(status || 'unpaid')
+
 const studentName = (student) => {
   if (!student) return ''
   return [student.last_name, student.first_name].filter(Boolean).join(', ')
@@ -651,6 +654,9 @@ export default function CashierLedger() {
 
     setProcessing(true)
     try {
+      const newPaid = (parseFloat(payableFee.total_paid) || 0) + amount
+      const projectedBalance = (parseFloat(payableFee.total_fees) || 0) - (parseFloat(payableFee.total_discount) || 0) - newPaid
+      const paymentStatus = projectedBalance <= 0.005 ? 'paid' : 'completed'
       const orNumber = `OR-${Date.now().toString(36).toUpperCase()}`
       const paymentData = {
         student_id: selectedStudent.id,
@@ -662,7 +668,7 @@ export default function CashierLedger() {
         or_number: orNumber,
         fee_type_id: paymentForm.fee_type_id || null,
         received_by: user?.id,
-        status: 'completed',
+        status: paymentStatus,
         receipt_number: orNumber,
         processed_by: user?.id,
       }
@@ -688,13 +694,11 @@ export default function CashierLedger() {
       })
       if (receiptError) throw receiptError
 
-      const newPaid = (parseFloat(payableFee.total_paid) || 0) + amount
-      const projectedBalance = (parseFloat(payableFee.total_fees) || 0) - (parseFloat(payableFee.total_discount) || 0) - newPaid
       const { error: updateError } = await supabase
         .from('student_fees')
         .update({
           total_paid: newPaid,
-          status: projectedBalance <= 0 ? 'paid' : 'partial',
+          status: paymentStatus === 'paid' ? 'paid' : 'partial',
         })
         .eq('id', payableFee.id)
       if (updateError) throw updateError
@@ -703,7 +707,7 @@ export default function CashierLedger() {
         ...payableFee,
         total_paid: newPaid,
         balance: Math.max(projectedBalance, 0),
-        status: projectedBalance <= 0 ? 'paid' : 'partial',
+        status: paymentStatus === 'paid' ? 'paid' : 'partial',
       }
       const { error: invoiceSyncError } = await syncInvoiceFromStudentFee(supabase, {
         studentFee: syncedStudentFee,
@@ -771,7 +775,7 @@ export default function CashierLedger() {
       hour: 'numeric',
       minute: '2-digit',
     })
-    const statusLabel = (ledgerView.status || 'unpaid').replace('_', ' ').toUpperCase()
+    const statusLabel = formatAccountStatus(ledgerView.status).toUpperCase()
 
     const chargeRows = feeBreakdownRows.length
       ? feeBreakdownRows.map(row => `
@@ -1322,7 +1326,7 @@ export default function CashierLedger() {
                 <MetricCard label="Assessment" value={formatCurrency(ledgerView.totalFees)} sub={selectedYear?.year_name} icon={FileText} tone="text-blue-600" />
                 <MetricCard label="Discount" value={formatCurrency(ledgerView.totalDiscount)} sub="Applied credits" icon={CheckCircle2} tone="text-violet-600" />
                 <MetricCard label="Paid" value={formatCurrency(ledgerView.totalPaid)} sub={`${ledger.payments.length} payment${ledger.payments.length !== 1 ? 's' : ''}`} icon={Banknote} tone="text-green-600" />
-                <MetricCard label="Balance" value={formatCurrency(ledgerView.balance)} sub={ledgerView.status} icon={AlertCircle} tone={ledgerView.balance > 0 ? 'text-amber-600' : 'text-green-600'} />
+                <MetricCard label="Balance" value={formatCurrency(ledgerView.balance)} sub={formatAccountStatus(ledgerView.status)} icon={AlertCircle} tone={ledgerView.balance > 0 ? 'text-amber-600' : 'text-green-600'} />
               </div>
 
               <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">

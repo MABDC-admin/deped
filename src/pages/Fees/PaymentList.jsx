@@ -18,6 +18,15 @@ const formatPaymentMethod = (value) =>
 const getReceiptNumber = (payment) =>
   payment?.or_number || payment?.receipt_number || payment?.reference_number || '—';
 
+const getPaymentDisplayStatus = (payment) => {
+  if (payment?.is_refunded) return 'refunded';
+
+  const feeIsPaid = payment?.student_fees?.status === 'paid' || parseFloat(payment?.student_fees?.balance || 0) <= 0;
+  if (feeIsPaid && ['completed', 'paid'].includes(payment?.status || 'completed')) return 'paid';
+
+  return payment?.status || '';
+};
+
 const getGradeSection = (payment) => {
   const grade = payment?.enrollment?.grade_levels?.name;
   const section = payment?.enrollment?.sections?.name;
@@ -107,7 +116,7 @@ const PaymentList = () => {
       const [paymentsRes, feeTypesRes, enrollmentMap] = await Promise.all([
         supabase
           .from('payments')
-          .select('id, amount, payment_method, payment_date, created_at, status, receipt_number, or_number, reference_number, remarks, is_refunded, fee_type_id, student_id, students(id, first_name, last_name, lrn), student_fees!inner(id, school_year_id, school_years(year_name))')
+          .select('id, amount, payment_method, payment_date, created_at, status, receipt_number, or_number, reference_number, remarks, is_refunded, fee_type_id, student_id, students(id, first_name, last_name, lrn), student_fees!inner(id, school_year_id, balance, status, school_years(year_name))')
           .eq('student_fees.school_year_id', schoolYearId)
           .order('payment_date', { ascending: false })
           .order('created_at', { ascending: false })
@@ -159,7 +168,7 @@ const PaymentList = () => {
       const receipt = `${p.or_number || ''} ${p.receipt_number || ''}`.toLowerCase();
       const lrn = (p.students?.lrn || '').toLowerCase();
       const matchSearch = !q || name.includes(q) || reverseName.includes(q) || receipt.includes(q) || lrn.includes(q);
-      const matchStatus = statusFilter === 'all' || p.status === statusFilter;
+      const matchStatus = statusFilter === 'all' || getPaymentDisplayStatus(p) === statusFilter;
       return matchSearch && matchStatus;
     });
   }, [payments, search, statusFilter]);
@@ -177,6 +186,16 @@ const PaymentList = () => {
     pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
     overdue: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
     cancelled: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
+    refunded: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
+  };
+
+  const statusLabels = {
+    completed: 'Completed',
+    paid: 'Fully Paid',
+    pending: 'Pending',
+    overdue: 'Overdue',
+    cancelled: 'Cancelled',
+    refunded: 'Refunded',
   };
 
   const formatCurrency = (amount) => `₱${parseFloat(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -256,7 +275,7 @@ const PaymentList = () => {
               className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-gray-800/50 outline-none text-sm">
               <option value="all">All Status</option>
               <option value="completed">Completed</option>
-              <option value="paid">Paid</option>
+              <option value="paid">Fully Paid</option>
               <option value="pending">Pending</option>
               <option value="overdue">Overdue</option>
             </select>
@@ -295,8 +314,8 @@ const PaymentList = () => {
                           <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{payment.fee_type?.name || 'General Payment'}</td>
                           <td className="px-4 py-3 text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(payment.amount)}</td>
                           <td className="px-4 py-3">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusStyles[payment.status] || ''}`}>
-                              {payment.status || '—'}
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusStyles[getPaymentDisplayStatus(payment)] || ''}`}>
+                              {statusLabels[getPaymentDisplayStatus(payment)] || '—'}
                             </span>
                           </td>
                           <td className="px-4 py-3 font-mono text-xs text-gray-500">{getReceiptNumber(payment)}</td>
@@ -369,7 +388,7 @@ const PaymentList = () => {
                   { label: 'School Year', value: selectedPayment.student_fees?.school_years?.year_name || selectedYear?.year_name },
                   { label: 'Fee Type', value: selectedPayment.fee_type?.name || 'General Payment' },
                   { label: 'Amount', value: formatCurrency(selectedPayment.amount) },
-                  { label: 'Status', value: selectedPayment.status },
+                  { label: 'Status', value: statusLabels[getPaymentDisplayStatus(selectedPayment)] },
                   { label: 'Date', value: selectedPayment.payment_date ? new Date(selectedPayment.payment_date).toLocaleDateString() : '—' },
                   { label: 'Method', value: formatPaymentMethod(selectedPayment.payment_method) },
                 ].filter(f => f.value).map(f => (

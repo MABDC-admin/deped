@@ -117,6 +117,7 @@ const displayStatus = (invoice) => {
   if (!invoice) return 'unpaid';
   if (invoice.status === 'void' || invoice.status === 'paid') return invoice.status;
   const balance = parseFloat(invoice.balance || 0);
+  if (balance <= 0.005 && parseFloat(invoice.net_amount || 0) > 0) return 'paid';
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const due = invoice.due_date ? new Date(invoice.due_date) : null;
@@ -139,7 +140,7 @@ const statusConfig = {
     accent: 'text-blue-600',
   },
   paid: {
-    label: 'Paid',
+    label: 'Fully Paid',
     icon: CheckCircle2,
     badge: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-300 dark:ring-emerald-800',
     accent: 'text-emerald-600',
@@ -806,7 +807,7 @@ const InvoiceList = () => {
               ['all', 'All'],
               ['unpaid', 'Unpaid'],
               ['partial', 'Partial'],
-              ['paid', 'Paid'],
+              ['paid', 'Fully Paid'],
               ['overdue', 'Overdue'],
               ['void', 'Void'],
             ].map(([id, label]) => (

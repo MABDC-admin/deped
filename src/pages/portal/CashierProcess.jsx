@@ -256,6 +256,9 @@ export default function CashierProcess() {
       return;
     }
     const amount = parseFloat(paymentForm.amount);
+    const newPaid = (parseFloat(selectedStudentFees.total_paid) || 0) + amount;
+    const projectedBalance = parseFloat(selectedStudentFees.total_fees) - parseFloat(selectedStudentFees.total_discount || 0) - newPaid;
+    const paymentStatus = projectedBalance <= 0.005 ? 'paid' : 'completed';
 
     // Validate: don't allow overpayment
     if (selectedStudentFees && amount > parseFloat(selectedStudentFees.balance || 0)) {
@@ -276,7 +279,7 @@ export default function CashierProcess() {
         or_number: orNumber,
         fee_type_id: paymentForm.fee_type_id || null,
         received_by: user?.id,
-        status: 'completed',
+        status: paymentStatus,
         receipt_number: orNumber,
         processed_by: user?.id,
       };
@@ -298,11 +301,9 @@ export default function CashierProcess() {
 
       // Update student_fees — only total_paid & status (balance is auto-generated)
       if (selectedStudentFees) {
-        const newPaid = (parseFloat(selectedStudentFees.total_paid) || 0) + amount;
-        const projectedBalance = parseFloat(selectedStudentFees.total_fees) - parseFloat(selectedStudentFees.total_discount || 0) - newPaid;
         const { error: feeUpdateError } = await supabase.from('student_fees').update({
           total_paid: newPaid,
-          status: projectedBalance <= 0 ? 'paid' : 'partial',
+          status: paymentStatus === 'paid' ? 'paid' : 'partial',
         }).eq('id', selectedStudentFees.id);
         if (feeUpdateError) throw feeUpdateError;
 
@@ -311,7 +312,7 @@ export default function CashierProcess() {
             ...selectedStudentFees,
             total_paid: newPaid,
             balance: Math.max(projectedBalance, 0),
-            status: projectedBalance <= 0 ? 'paid' : 'partial',
+            status: paymentStatus === 'paid' ? 'paid' : 'partial',
           },
           studentId: selectedStudent.id,
           schoolYearId: selectedSY,
