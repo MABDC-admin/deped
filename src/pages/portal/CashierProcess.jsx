@@ -326,6 +326,11 @@ export default function CashierProcess() {
   const formatCurrency = (n) => `₱${parseFloat(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   const selectedYear = schoolYears.find(y => y.id === selectedSY);
 
+  const handleSchoolYearChange = (schoolYearId) => {
+    saveCashierSchoolYearId(schoolYearId);
+    setSelectedSY(schoolYearId);
+  };
+
   if (loading) return <SkeletonDashboard />;
 
   const kpis = [
@@ -352,7 +357,7 @@ export default function CashierProcess() {
             <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <select
               value={selectedSY}
-              onChange={(e) => setSelectedSY(e.target.value)}
+              onChange={(e) => handleSchoolYearChange(e.target.value)}
               className="w-full sm:w-56 pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/80 dark:bg-gray-800/80 text-sm font-medium text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-green-500"
             >
               {schoolYears.map(sy => (

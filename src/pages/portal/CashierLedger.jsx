@@ -656,6 +656,7 @@ export default function CashierLedger() {
 
   const handleYearChange = (schoolYearId) => {
     const nextYear = schoolYears.find(y => y.id === schoolYearId)
+    saveCashierSchoolYearId(schoolYearId)
     setSelectedSY(schoolYearId)
     setSelectedYear(nextYear || null)
     setSearch('')
