@@ -84,7 +84,7 @@ export default function RegistrarRecords() {
       setActiveYear(yearData);
 
       let enrollQuery = supabase.from('enrollments')
-        .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(id, first_name, last_name, lrn, gender, birth_date, address, contact_number, email), grade_levels(id, name, level_order), sections(id, name)')
+        .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(id, first_name, middle_name, last_name, suffix, lrn, gender, birth_date, house_no, street, barangay, city_municipality, province, zip_code, contact_number, email), grade_levels(id, name, level_order), sections(id, name)')
         .order('enrollment_date', { ascending: false });
       let sectionsQuery = supabase.from('sections')
         .select('id, name, grade_level_id, grade_levels(name)')
@@ -106,6 +106,10 @@ export default function RegistrarRecords() {
           .order('level_order'),
         sectionsQuery,
       ]);
+
+      if (enrollRes.error) throw enrollRes.error;
+      if (glRes.error) throw glRes.error;
+      if (secRes.error) throw secRes.error;
 
       const enrollments = enrollRes.data || [];
       setEnrollments(enrollments);
