@@ -9,7 +9,7 @@ import {
   ClipboardList, Users, Layers, Target, FileText, CheckCircle2, Clock, AlertCircle,
   TrendingUp, TrendingDown, GraduationCap, ChevronRight, UserPlus, BookOpen, Calendar, Settings,
   BarChart3, PlusCircle, Search, ArrowRight, Building, Brain, Sparkles, Award,
-  AlertTriangle, Zap, ArrowUpRight, Activity, Shield
+  AlertTriangle, Zap, ArrowUpRight, Activity, Shield, FileSearch
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -39,6 +39,7 @@ export default function RegistrarDashboard() {
     totalEnrolled: 0, pendingEnrollments: 0, unassignedSections: 0,
     totalSections: 0, gradeLevels: 0, totalStudents: 0, sectionCapacity: 0,
     maleCount: 0, femaleCount: 0, totalCapacity: 0, totalOccupied: 0,
+    totalRecords: 0,
   });
   const [enrollmentsByGrade, setEnrollmentsByGrade] = useState([]);
   const [enrollmentTypeData, setEnrollmentTypeData] = useState([]);
@@ -56,20 +57,29 @@ export default function RegistrarDashboard() {
         .from('school_years')
         .select('id, year_name')
         .eq('is_current', true)
-        .single();
+        .maybeSingle();
 
       const yearId = yearData?.id;
       setActiveYear(yearData);
 
+      let enrollQuery = supabase.from('enrollments')
+        .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(first_name, last_name, lrn, gender), grade_levels(name, level_order, category), sections(name)')
+        .order('enrollment_date', { ascending: false });
+      let sectionsQuery = supabase.from('sections')
+        .select('id, name, max_capacity, grade_level_id, grade_levels(name, level_order), section_students(id)')
+        .eq('is_active', true);
+
+      if (yearId) {
+        enrollQuery = enrollQuery.eq('school_year_id', yearId);
+        sectionsQuery = sectionsQuery.eq('school_year_id', yearId);
+      } else {
+        enrollQuery = enrollQuery.limit(0);
+        sectionsQuery = sectionsQuery.limit(0);
+      }
+
       const [enrollRes, sectionsRes, gradeLevelsRes] = await Promise.all([
-        supabase.from('enrollments')
-          .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(first_name, last_name, lrn, gender), grade_levels(name, level_order, category), sections(name)')
-          .eq('school_year_id', yearId)
-          .order('enrollment_date', { ascending: false }),
-        supabase.from('sections')
-          .select('id, name, max_capacity, grade_level_id, grade_levels(name, level_order), section_students(id)')
-          .eq('school_year_id', yearId)
-          .eq('is_active', true),
+        enrollQuery,
+        sectionsQuery,
         supabase.from('grade_levels')
           .select('id, name, level_order, category')
           .eq('is_active', true)
@@ -94,6 +104,7 @@ export default function RegistrarDashboard() {
         totalSections: sections.length, gradeLevels: gradeLevels.length, totalStudents,
         sectionCapacity: totalCapacity > 0 ? Math.round((totalOccupied / totalCapacity) * 100) : 0,
         maleCount, femaleCount, totalCapacity, totalOccupied,
+        totalRecords: enrollments.length,
       });
 
       // Enrollment by grade
@@ -135,6 +146,9 @@ export default function RegistrarDashboard() {
 
       // Smart insights
       const newInsights = [];
+      if (!yearId) {
+        newInsights.push({ type: 'danger', icon: Calendar, title: 'No Active School Year', message: 'Set one school year as current before processing enrollment and records.' });
+      }
       if (pending > 0) {
         newInsights.push({ type: 'warning', icon: Clock, title: 'Pending Enrollments', message: `${pending} enrollment${pending > 1 ? 's' : ''} awaiting approval. Review and process to avoid delays.` });
       }
@@ -186,6 +200,39 @@ export default function RegistrarDashboard() {
     returnee: 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400',
     cross_enrollee: 'bg-pink-100 dark:bg-pink-500/15 text-pink-700 dark:text-pink-400',
   };
+
+  const setupChecklist = [
+    {
+      label: 'Active School Year',
+      ok: Boolean(activeYear?.id),
+      detail: activeYear?.year_name || 'Set current year',
+      path: '/school-years',
+    },
+    {
+      label: 'Grade Levels',
+      ok: stats.gradeLevels > 0,
+      detail: `${stats.gradeLevels} configured`,
+      path: '/grade-levels',
+    },
+    {
+      label: 'Current Sections',
+      ok: stats.totalSections > 0,
+      detail: `${stats.totalSections} active sections`,
+      path: '/sections',
+    },
+    {
+      label: 'Enrollment Records',
+      ok: stats.totalRecords > 0,
+      detail: `${stats.totalRecords} records this year`,
+      path: '/enrollment',
+    },
+    {
+      label: 'Section Assignment',
+      ok: stats.unassignedSections === 0,
+      detail: stats.unassignedSections === 0 ? 'All assigned' : `${stats.unassignedSections} need sections`,
+      path: '/portal/registrar/records',
+    },
+  ];
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
@@ -303,6 +350,44 @@ export default function RegistrarDashboard() {
           </div>
         </motion.div>
       )}
+
+      {/* Registrar Readiness */}
+      <motion.div variants={fadeUp}>
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-slate-600 to-slate-500 flex items-center justify-center shadow-md shadow-slate-500/25">
+            <Shield className="w-4 h-4 text-white" />
+          </div>
+          <h2 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider">Registrar Must-Haves</h2>
+          <AnimatedBadge variant={setupChecklist.every(item => item.ok) ? 'success' : 'warning'} size="xs">
+            {setupChecklist.filter(item => item.ok).length}/{setupChecklist.length} Ready
+          </AnimatedBadge>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {setupChecklist.map((item, i) => (
+            <motion.button
+              key={item.label}
+              onClick={() => navigate(item.path)}
+              className={`glass-card glass-card-hover !p-4 text-left border transition-all ${item.ok ? 'border-emerald-200/60 dark:border-emerald-500/20' : 'border-amber-200/70 dark:border-amber-500/30'}`}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.04 }}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${item.ok ? 'bg-emerald-100 dark:bg-emerald-500/15' : 'bg-amber-100 dark:bg-amber-500/15'}`}>
+                  {item.ok
+                    ? <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    : <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />}
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-gray-300 dark:text-gray-600" />
+              </div>
+              <p className="mt-3 text-sm font-bold text-gray-900 dark:text-white">{item.label}</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{item.detail}</p>
+            </motion.button>
+          ))}
+        </div>
+      </motion.div>
 
       {/* ═══ Charts Row 1: Enrollment by Grade (Stacked Bar) + Enrollment Type Donut ═══ */}
       <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -546,12 +631,14 @@ export default function RegistrarDashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: 'New Enrollment', icon: UserPlus, path: '/enrollment/new', color: 'from-emerald-500 to-teal-400', shadow: 'shadow-emerald-500/20' },
+            { label: 'Records Office', icon: FileSearch, path: '/portal/registrar/records', color: 'from-slate-600 to-slate-400', shadow: 'shadow-slate-500/20' },
             { label: 'Students', icon: Users, path: '/students', color: 'from-blue-500 to-cyan-400', shadow: 'shadow-blue-500/20' },
             { label: 'Sections', icon: Layers, path: '/sections', color: 'from-violet-500 to-purple-400', shadow: 'shadow-violet-500/20' },
             { label: 'Grade Levels', icon: Target, path: '/grade-levels', color: 'from-amber-500 to-orange-400', shadow: 'shadow-amber-500/20' },
             { label: 'Subjects', icon: BookOpen, path: '/subjects', color: 'from-pink-500 to-rose-400', shadow: 'shadow-pink-500/20' },
             { label: 'Schedule', icon: Calendar, path: '/schedule', color: 'from-cyan-500 to-sky-400', shadow: 'shadow-cyan-500/20' },
             { label: 'Grade Reports', icon: BarChart3, path: '/grades/reports', color: 'from-orange-500 to-red-400', shadow: 'shadow-orange-500/20' },
+            { label: 'Promotions', icon: GraduationCap, path: '/school-years/promotions', color: 'from-indigo-500 to-blue-400', shadow: 'shadow-indigo-500/20' },
             { label: 'School Years', icon: Settings, path: '/school-years', color: 'from-slate-500 to-gray-400', shadow: 'shadow-slate-500/20' },
           ].map((action, i) => (
             <motion.button

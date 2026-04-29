@@ -78,24 +78,33 @@ export default function RegistrarRecords() {
         .from('school_years')
         .select('id, year_name')
         .eq('is_current', true)
-        .single();
+        .maybeSingle();
 
       const yearId = yearData?.id;
       setActiveYear(yearData);
 
+      let enrollQuery = supabase.from('enrollments')
+        .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(id, first_name, last_name, lrn, gender, birth_date, address, contact_number, email), grade_levels(id, name, level_order), sections(id, name)')
+        .order('enrollment_date', { ascending: false });
+      let sectionsQuery = supabase.from('sections')
+        .select('id, name, grade_level_id, grade_levels(name)')
+        .eq('is_active', true);
+
+      if (yearId) {
+        enrollQuery = enrollQuery.eq('school_year_id', yearId);
+        sectionsQuery = sectionsQuery.eq('school_year_id', yearId);
+      } else {
+        enrollQuery = enrollQuery.limit(0);
+        sectionsQuery = sectionsQuery.limit(0);
+      }
+
       const [enrollRes, glRes, secRes] = await Promise.all([
-        supabase.from('enrollments')
-          .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(id, first_name, last_name, lrn, gender, birth_date, address, contact_number, email), grade_levels(id, name, level_order), sections(id, name)')
-          .eq('school_year_id', yearId)
-          .order('enrollment_date', { ascending: false }),
+        enrollQuery,
         supabase.from('grade_levels')
           .select('id, name, level_order, category')
           .eq('is_active', true)
           .order('level_order'),
-        supabase.from('sections')
-          .select('id, name, grade_level_id, grade_levels(name)')
-          .eq('school_year_id', yearId)
-          .eq('is_active', true),
+        sectionsQuery,
       ]);
 
       const enrollments = enrollRes.data || [];
