@@ -526,7 +526,7 @@ export default function CashierProcess() {
             { label: 'New Payment', icon: CreditCard, color: 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400', action: () => openPaymentModal() },
             { label: 'Fee Summary', icon: PiggyBank, color: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400', action: () => window.location.href = '/fees' },
             { label: 'All Payments', icon: FileText, color: 'bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400', action: () => window.location.href = '/payments' },
-            { label: 'Students', icon: Users, color: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400', action: () => window.location.href = '/students' },
+            { label: 'Students', icon: Users, color: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400', action: () => window.location.href = selectedSY ? `/students?school_year_id=${selectedSY}` : '/students' },
           ].map((action) => (
             <button key={action.label} onClick={action.action} className={`p-4 rounded-xl ${action.color} flex flex-col items-center gap-2 hover:scale-105 transition-transform`}>
               <action.icon className="w-6 h-6" />

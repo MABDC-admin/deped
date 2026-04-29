@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from '../../lib/supabase'
 import PageHeader from '../../components/PageHeader'
@@ -9,7 +9,7 @@ import LoadingSpinner from '../../components/LoadingSpinner'
 import {
   Plus, Pencil, Trash2, Eye, Users, Search, Filter, X,
   UserCheck, UserX, GraduationCap, ArrowRightLeft,
-  ChevronLeft, ChevronRight, ArrowUpDown, LayoutGrid, List
+  ChevronLeft, ChevronRight, ArrowUpDown, LayoutGrid, List, Calendar
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -77,10 +77,14 @@ const tableRowVariants = {
 }
 
 export default function StudentList() {
+  const location = useLocation()
   const navigate = useNavigate()
   const [data, setData] = useState([])
   const [gradeLevels, setGradeLevels] = useState([])
   const [sections, setSections] = useState([])
+  const [schoolYears, setSchoolYears] = useState([])
+  const [filterSchoolYear, setFilterSchoolYear] = useState('')
+  const [lookupsLoaded, setLookupsLoaded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -103,34 +107,78 @@ export default function StudentList() {
   const pageSize = 15
 
   useEffect(() => {
-    const loadAll = async () => {
-      const [studRes, glRes, secRes] = await Promise.all([
-        supabase.from('students').select('*, enrollments(status, school_year_id, created_at, school_years(is_current, start_date), grade_levels(id, name), sections(id, name))').order('last_name'),
+    let cancelled = false
+    const loadLookups = async () => {
+      setLoading(true)
+      setLookupsLoaded(false)
+      const [glRes, secRes, syRes] = await Promise.all([
         supabase.from('grade_levels').select('id, name, level_order').order('level_order'),
-        supabase.from('sections').select('id, name, grade_level_id').order('name'),
+        supabase.from('sections').select('id, name, grade_level_id, school_year_id').order('name'),
+        supabase.from('school_years').select('id, year_name, status, is_current, start_date').order('start_date', { ascending: false }),
       ])
-      if (studRes.error) toast.error('Failed to load students')
-      setData(studRes.data || [])
+      if (cancelled) return
+      if (glRes.error || secRes.error || syRes.error) toast.error('Failed to load student filters')
+      const years = syRes.data || []
+      const requestedYear = new URLSearchParams(location.search).get('school_year_id')
+      const selectedYear = years.find(y => y.id === requestedYear) || years.find(y => y.is_current || y.status === 'active') || years[0]
       setGradeLevels(glRes.data || [])
       setSections(secRes.data || [])
-      setLoading(false)
+      setSchoolYears(years)
+      setFilterSchoolYear(selectedYear?.id || '')
+      setLookupsLoaded(true)
+      if (!selectedYear) {
+        setData([])
+        setLoading(false)
+      }
     }
-    loadAll()
-  }, [])
+    loadLookups()
+    return () => { cancelled = true }
+  }, [location.search])
 
-  const fetchData = async () => {
+  useEffect(() => {
+    if (!lookupsLoaded || !filterSchoolYear) return
+    fetchData(filterSchoolYear)
+  }, [lookupsLoaded, filterSchoolYear])
+
+  const fetchData = async (schoolYearId = filterSchoolYear) => {
+    if (!schoolYearId) {
+      setData([])
+      setLoading(false)
+      return
+    }
     setLoading(true)
     const { data: rows, error } = await supabase
-      .from('students')
-      .select('*, enrollments(status, school_year_id, created_at, school_years(is_current, start_date), grade_levels(id, name), sections(id, name))')
-      .order('last_name')
+      .from('enrollments')
+      .select('id, status, school_year_id, created_at, students(*), school_years(is_current, start_date, year_name), grade_levels(id, name), sections(id, name)')
+      .eq('school_year_id', schoolYearId)
+      .eq('status', 'enrolled')
+      .order('created_at', { ascending: false })
     if (error) toast.error('Failed to load data')
-    else setData(rows || [])
+    else {
+      const students = (rows || [])
+        .filter(row => row.students)
+        .map(row => ({
+          ...row.students,
+          enrollments: [{
+            id: row.id,
+            status: row.status,
+            school_year_id: row.school_year_id,
+            created_at: row.created_at,
+            school_years: row.school_years,
+            grade_levels: row.grade_levels,
+            sections: row.sections,
+          }],
+        }))
+        .sort((a, b) => (a.last_name || '').localeCompare(b.last_name || ''))
+      setData(students)
+    }
     setLoading(false)
   }
 
   const getLatestEnrollment = (row) => {
     if (!row.enrollments || row.enrollments.length === 0) return null
+    const selected = row.enrollments.find(e => e.school_year_id === filterSchoolYear)
+    if (selected) return selected
     const current = row.enrollments.find(e => e.school_years?.is_current)
     if (current) return current
     return [...row.enrollments].sort((a, b) => {
@@ -181,7 +229,7 @@ export default function StudentList() {
     })
 
     return result
-  }, [data, search, filterStatus, filterGender, filterGrade, filterSection, sortCol, sortDir])
+  }, [data, search, filterStatus, filterGender, filterGrade, filterSection, sortCol, sortDir, filterSchoolYear])
 
   const totalPages = Math.ceil(filteredData.length / pageSize)
   const pagedData = filteredData.slice((page - 1) * pageSize, page * pageSize)
@@ -196,11 +244,14 @@ export default function StudentList() {
   }), [data])
 
   const filteredSections = useMemo(() => {
-    if (!filterGrade) return sections
-    return sections.filter(s => s.grade_level_id === filterGrade)
-  }, [sections, filterGrade])
+    let result = sections
+    if (filterSchoolYear) result = result.filter(s => s.school_year_id === filterSchoolYear)
+    if (filterGrade) result = result.filter(s => s.grade_level_id === filterGrade)
+    return result
+  }, [sections, filterGrade, filterSchoolYear])
 
   const hasFilters = filterGrade || filterSection || filterStatus || filterGender
+  const selectedYear = schoolYears.find(y => y.id === filterSchoolYear)
 
   const toggleSort = (col) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -227,7 +278,7 @@ export default function StudentList() {
       setModalOpen(false)
       setEditing(null)
       setFormData(defaultForm)
-      fetchData()
+      fetchData(filterSchoolYear)
     } catch (err) {
       toast.error(err.message || 'Failed to save')
     }
@@ -251,7 +302,7 @@ export default function StudentList() {
       const { error } = await supabase.from('students').delete().eq('id', deleteId)
       if (error) throw error
       toast.success('Student deleted')
-      fetchData()
+      fetchData(filterSchoolYear)
     } catch (err) { toast.error('Failed to delete') }
     setDeleteOpen(false)
     setDeleteId(null)
@@ -280,7 +331,7 @@ export default function StudentList() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-      <PageHeader title="Students" subtitle={`${data.length} total students enrolled`}>
+      <PageHeader title="Students" subtitle={`${data.length} students enrolled${selectedYear ? ` in ${selectedYear.year_name}` : ''}`}>
         <motion.button
           onClick={() => { setEditing(null); setFormData(defaultForm); setModalOpen(true) }}
           className="btn-primary flex items-center gap-2"
@@ -326,6 +377,25 @@ export default function StudentList() {
 
       {/* Search + Filters + View Toggle */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-4">
+        <div className="relative w-full sm:w-56">
+          <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <select
+            value={filterSchoolYear}
+            onChange={e => {
+              setFilterSchoolYear(e.target.value)
+              setFilterGrade('')
+              setFilterSection('')
+              setPage(1)
+            }}
+            className="input-field pl-10 text-sm"
+          >
+            {schoolYears.map(sy => (
+              <option key={sy.id} value={sy.id}>
+                {sy.year_name}{sy.is_current || sy.status === 'active' ? ' (Active)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
