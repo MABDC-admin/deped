@@ -27,6 +27,7 @@ import PaymentList from './pages/Fees/PaymentList'
 import InvoiceList from './pages/finance/InvoiceList'
 import ReceiptList from './pages/finance/ReceiptList'
 import ExpenseList from './pages/finance/ExpenseList'
+import LoanList from './pages/finance/LoanList'
 import FinanceReports from './pages/finance/FinanceReports'
 import AnnouncementList from './pages/Announcements/AnnouncementList'
 import ClassSchedule from './pages/schedule/ClassSchedule'
@@ -98,6 +99,7 @@ export default function App() {
               <Route path="invoices" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><InvoiceList /></RoleGuard>} />
               <Route path="receipts" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><ReceiptList /></RoleGuard>} />
               <Route path="expenses" element={<RoleGuard allowed={["super_admin","cashier"]}><ExpenseList /></RoleGuard>} />
+              <Route path="loans" element={<RoleGuard allowed={["super_admin","cashier"]}><LoanList /></RoleGuard>} />
               <Route path="finance/reports" element={<RoleGuard allowed={["super_admin","cashier","principal"]}><FinanceReports /></RoleGuard>} />
               <Route path="announcements" element={<RoleGuard allowed={["registrar","teacher","principal","guidance","cashier","parent","student"]}><AnnouncementList /></RoleGuard>} />
               <Route path="schedule" element={<RoleGuard allowed={["registrar","teacher","principal","guidance"]}><ClassSchedule /></RoleGuard>} />

@@ -5,7 +5,8 @@ import {
   Search, LayoutDashboard, Users, GraduationCap, BookOpen, Calendar,
   ClipboardList, UserCheck, Settings, Bell, DollarSign, BarChart3,
   School, FileText, Shield, Clock, AlertTriangle, Heart, Megaphone,
-  BookMarked, Activity, Layers, CalendarDays, UserCog, Command, ArrowRight
+  BookMarked, Activity, Layers, CalendarDays, UserCog, Command, ArrowRight,
+  Wallet, CreditCard
 } from 'lucide-react'
 
 const commands = [
@@ -25,6 +26,8 @@ const commands = [
   { name: 'Fees', path: '/fees', icon: DollarSign, category: 'Finance' },
   { name: 'Payments', path: '/payments', icon: Activity, category: 'Finance' },
   { name: 'Student Ledger', path: '/portal/cashier/ledger', icon: BookOpen, category: 'Finance' },
+  { name: 'Expenses', path: '/expenses', icon: Wallet, category: 'Finance' },
+  { name: 'Loans', path: '/loans', icon: CreditCard, category: 'Finance' },
   { name: 'Announcements', path: '/announcements', icon: Megaphone, category: 'Communication' },
   { name: 'Notifications', path: '/notifications', icon: Bell, category: 'Communication' },
   { name: 'Class Schedule', path: '/schedule', icon: Clock, category: 'Navigation' },

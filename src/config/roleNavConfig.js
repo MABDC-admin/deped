@@ -2,7 +2,7 @@ import { Wallet, PieChart, FileSpreadsheet,
   LayoutDashboard, Users, GraduationCap, ClipboardList, Calendar, 
   DollarSign, Megaphone, Settings, Shield, BookOpen, UserCheck,
   Heart, Brain, Receipt, Eye, School, BarChart3, Clock,
-  AlertTriangle, FileText, Bell, Layers, Target
+  AlertTriangle, FileText, Bell, Layers, Target, CreditCard
 } from 'lucide-react';
 
 // Define navigation items per role
@@ -45,6 +45,8 @@ export const roleNavConfig = {
         items: [
           { label: 'Fees', path: '/fees', icon: DollarSign },
           { label: 'Payments', path: '/payments', icon: Receipt },
+          { label: 'Expenses', path: '/expenses', icon: Wallet },
+          { label: 'Loans', path: '/loans', icon: CreditCard },
         ]
       },
       {
@@ -184,6 +186,7 @@ export const roleNavConfig = {
         title: 'Reports & Tracking',
         items: [
           { label: 'Expenses', path: '/expenses', icon: Wallet },
+          { label: 'Loans', path: '/loans', icon: CreditCard },
           { label: 'Financial Reports', path: '/finance/reports', icon: PieChart },
           { label: 'Students', path: '/students', icon: Users },
         ]
