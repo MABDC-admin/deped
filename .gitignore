@@ -4,5 +4,6 @@ dist/
 .env.local
 .env.*.local
 vite-dev*.log
+vite.*.log
 *.bak
 *.bak2

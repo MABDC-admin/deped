@@ -4,7 +4,9 @@ import { supabase } from '../../lib/supabase'
 import PageHeader from '../../components/PageHeader'
 import LoadingSpinner from '../../components/LoadingSpinner'
 import EmptyState from '../../components/EmptyState'
-import { Save, BookOpen } from 'lucide-react'
+import Modal from '../../components/Modal'
+import ConfirmDialog from '../../components/ConfirmDialog'
+import { Save, BookOpen, Pencil, Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const pageVariants = {
@@ -35,6 +37,13 @@ const rowVariants = {
 const DEFAULT_WEIGHTS = { written_work: 0.30, performance_task: 0.50, quarterly_assessment: 0.20 }
 const SCIENCE_MATH_WEIGHTS = { written_work: 0.40, performance_task: 0.40, quarterly_assessment: 0.20 }
 const MAPEH_WEIGHTS = { written_work: 0.20, performance_task: 0.60, quarterly_assessment: 0.20 }
+const emptyComponentForm = {
+  teacher_id: '',
+  component_type: 'written_work',
+  activity_name: '',
+  activity_number: 1,
+  total_score: 100,
+}
 
 function getWeights(subject) {
   if (subject?.subject_group === 'science_math') return SCIENCE_MATH_WEIGHTS
@@ -75,12 +84,19 @@ export default function GradeEntry() {
   const [sections, setSections] = useState([])
   const [subjects, setSubjects] = useState([])
   const [quarters, setQuarters] = useState([])
+  const [teachers, setTeachers] = useState([])
   const [students, setStudents] = useState([])
   const [components, setComponents] = useState([])
   const [scores, setScores] = useState({})
   const [filters, setFilters] = useState({ school_year_id: '', section_id: '', subject_id: '', quarter_id: '' })
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [componentForm, setComponentForm] = useState(emptyComponentForm)
+  const [componentEditId, setComponentEditId] = useState(null)
+  const [componentModalOpen, setComponentModalOpen] = useState(false)
+  const [componentSaving, setComponentSaving] = useState(false)
+  const [deleteComponentId, setDeleteComponentId] = useState(null)
+  const [componentDeleting, setComponentDeleting] = useState(false)
 
   useEffect(() => {
     fetchInitialData()
@@ -97,16 +113,18 @@ export default function GradeEntry() {
   }, [filters.section_id, filters.subject_id, filters.quarter_id])
 
   const fetchInitialData = async () => {
-    const [sy, sec, sub, q] = await Promise.all([
+    const [sy, sec, sub, q, teacherRes] = await Promise.all([
       supabase.from('school_years').select('*').order('start_date', { ascending: false }),
       supabase.from('sections').select('*, grade_levels(name)').order('name'),
       supabase.from('subjects').select('*').order('name'),
       supabase.from('quarters').select('*').order('quarter_number'),
+      supabase.from('user_profiles').select('id, first_name, last_name').eq('role', 'teacher').order('last_name'),
     ])
     setSchoolYears(sy.data || [])
     setSections(sec.data || [])
     setSubjects(sub.data || [])
     setQuarters(q.data || [])
+    setTeachers(teacherRes.data || [])
     const active = (sy.data || []).find(s => s.status === 'active' || s.is_current)
     if (active) setFilters(prev => ({ ...prev, school_year_id: active.id }))
   }
@@ -137,6 +155,78 @@ export default function GradeEntry() {
   const handleScoreChange = (componentId, studentId, value) => {
     const key = `${componentId}_${studentId}`
     setScores(prev => ({ ...prev, [key]: { ...prev[key], grade_component_id: componentId, student_id: studentId, score: parseFloat(value) || 0 } }))
+  }
+
+  const canManageComponents = filters.section_id && filters.subject_id && filters.quarter_id
+
+  const openAddComponent = () => {
+    if (!canManageComponents) {
+      toast.error('Select section, subject, and quarter first')
+      return
+    }
+    setComponentForm({
+      ...emptyComponentForm,
+      teacher_id: teachers[0]?.id || '',
+      activity_number: components.length + 1,
+    })
+    setComponentEditId(null)
+    setComponentModalOpen(true)
+  }
+
+  const openEditComponent = (component) => {
+    setComponentForm({
+      teacher_id: component.teacher_id || '',
+      component_type: component.component_type || 'written_work',
+      activity_name: component.activity_name || '',
+      activity_number: component.activity_number || 1,
+      total_score: component.total_score || 100,
+    })
+    setComponentEditId(component.id)
+    setComponentModalOpen(true)
+  }
+
+  const handleComponentSave = async () => {
+    if (!canManageComponents) {
+      toast.error('Select section, subject, and quarter first')
+      return
+    }
+    if (!componentForm.teacher_id || !componentForm.activity_name || !componentForm.total_score) {
+      toast.error('Complete all component fields')
+      return
+    }
+
+    setComponentSaving(true)
+    const payload = {
+      section_id: filters.section_id,
+      subject_id: filters.subject_id,
+      quarter_id: filters.quarter_id,
+      teacher_id: componentForm.teacher_id,
+      component_type: componentForm.component_type,
+      activity_name: componentForm.activity_name,
+      activity_number: Number(componentForm.activity_number),
+      total_score: Number(componentForm.total_score),
+    }
+    const { error } = componentEditId
+      ? await supabase.from('grade_components').update(payload).eq('id', componentEditId)
+      : await supabase.from('grade_components').insert(payload)
+    setComponentSaving(false)
+    if (error) { toast.error(error.message); return }
+    toast.success(componentEditId ? 'Grade component updated' : 'Grade component added')
+    setComponentModalOpen(false)
+    fetchComponents()
+  }
+
+  const handleComponentDelete = async () => {
+    setComponentDeleting(true)
+    let { error } = await supabase.from('student_scores').delete().eq('grade_component_id', deleteComponentId)
+    if (!error) {
+      ;({ error } = await supabase.from('grade_components').delete().eq('id', deleteComponentId))
+    }
+    setComponentDeleting(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Grade component deleted')
+    setDeleteComponentId(null)
+    fetchComponents()
   }
 
   const handleSave = async () => {
@@ -248,16 +338,31 @@ export default function GradeEntry() {
               <motion.h3 className="font-semibold" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
                 {students.length} Students &bull; {components.length} Components
               </motion.h3>
-              <motion.button
-                onClick={handleSave}
-                disabled={saving}
-                className="btn-primary flex items-center gap-2"
-                whileHover={{ scale: 1.02, boxShadow: '0 4px 15px rgba(59,130,246,0.3)' }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <Save className="w-4 h-4" /> {saving ? 'Saving...' : 'Save Scores'}
-              </motion.button>
+              <div className="flex items-center gap-2">
+                <motion.button
+                  onClick={openAddComponent}
+                  className="btn-secondary flex items-center gap-2"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <Plus className="w-4 h-4" /> Add Component
+                </motion.button>
+                <motion.button
+                  onClick={handleSave}
+                  disabled={saving || components.length === 0}
+                  className="btn-primary flex items-center gap-2"
+                  whileHover={{ scale: 1.02, boxShadow: '0 4px 15px rgba(59,130,246,0.3)' }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <Save className="w-4 h-4" /> {saving ? 'Saving...' : 'Save Scores'}
+                </motion.button>
+              </div>
             </div>
+            {components.length === 0 && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                Add grade components first, then score inputs will appear for each student.
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50">
@@ -265,8 +370,16 @@ export default function GradeEntry() {
                     <th className="px-3 py-2 text-left font-medium text-gray-500">Student</th>
                     {components.map(c => (
                       <th key={c.id} className="px-3 py-2 text-center font-medium text-gray-500">
-                        <div>{c.component_type}</div>
-                        <div className="text-xs">#{c.activity_number} ({c.total_score})</div>
+                        <div className="flex items-center justify-center gap-1">
+                          <span>{c.component_type}</span>
+                          <button onClick={() => openEditComponent(c)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit component">
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                          <button onClick={() => setDeleteComponentId(c.id)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Delete component">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="text-xs">{c.activity_name} #{c.activity_number} ({c.total_score})</div>
                       </th>
                     ))}
                   </tr>
@@ -305,6 +418,53 @@ export default function GradeEntry() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <Modal isOpen={componentModalOpen} onClose={() => setComponentModalOpen(false)} title={componentEditId ? 'Edit Grade Component' : 'Add Grade Component'} size="lg">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Teacher</label>
+              <select className="input-field" value={componentForm.teacher_id} onChange={e => setComponentForm({ ...componentForm, teacher_id: e.target.value })}>
+                <option value="">Select...</option>
+                {teachers.map(t => <option key={t.id} value={t.id}>{t.last_name}, {t.first_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Component Type</label>
+              <select className="input-field" value={componentForm.component_type} onChange={e => setComponentForm({ ...componentForm, component_type: e.target.value })}>
+                <option value="written_work">Written Work</option>
+                <option value="performance_task">Performance Task</option>
+                <option value="quarterly_assessment">Quarterly Assessment</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Activity Name</label>
+              <input className="input-field" value={componentForm.activity_name} onChange={e => setComponentForm({ ...componentForm, activity_name: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Activity Number</label>
+              <input type="number" min="1" className="input-field" value={componentForm.activity_number} onChange={e => setComponentForm({ ...componentForm, activity_number: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Highest Possible Score</label>
+              <input type="number" min="1" step="0.5" className="input-field" value={componentForm.total_score} onChange={e => setComponentForm({ ...componentForm, total_score: e.target.value })} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button className="btn-secondary" onClick={() => setComponentModalOpen(false)}>Cancel</button>
+            <button className="btn-primary" onClick={handleComponentSave} disabled={componentSaving}>{componentSaving ? 'Saving...' : 'Save'}</button>
+          </div>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={!!deleteComponentId}
+        onClose={() => setDeleteComponentId(null)}
+        onConfirm={handleComponentDelete}
+        loading={componentDeleting}
+        title="Delete Grade Component"
+        message="Delete this grade component and its student scores? This cannot be undone."
+      />
     </motion.div>
   )
 }

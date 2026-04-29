@@ -25,13 +25,26 @@ export default function Topbar({ setIsOpen }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const handleLogout = async () => {
+  const stopMenuEvent = (event) => {
+    event?.preventDefault()
+    event?.stopPropagation()
+  }
+
+  const handleSettings = (event) => {
+    stopMenuEvent(event)
+    setShowProfile(false)
+    navigate('/settings/system')
+  }
+
+  const handleLogout = async (event) => {
+    stopMenuEvent(event)
+    setShowProfile(false)
     try {
       await logout()
     } catch (err) {
       console.error('Logout error:', err)
     }
-    navigate('/login')
+    navigate('/login', { replace: true })
   }
 
   const toggleFullscreen = () => {
@@ -59,7 +72,7 @@ export default function Topbar({ setIsOpen }) {
   }
 
   return (
-    <header className="glass-topbar sticky top-0 z-10 px-4 py-3">
+    <header className="glass-topbar sticky top-0 z-[1000] px-4 py-3">
       <div className="flex items-center justify-between gap-4">
         {/* Left: Menu + Search */}
         <div className="flex items-center gap-3">
@@ -124,7 +137,7 @@ export default function Topbar({ setIsOpen }) {
           <NotificationCenter />
 
           {/* Profile */}
-          <div className="relative" ref={profileRef}>
+          <div className="relative z-[1001]" ref={profileRef}>
             <motion.button
               className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-gray-100/80 dark:hover:bg-dark-700/50 transition-all duration-200"
               onClick={() => setShowProfile(!showProfile)}
@@ -147,7 +160,7 @@ export default function Topbar({ setIsOpen }) {
             <AnimatePresence>
               {showProfile && (
                 <motion.div
-                  className="absolute right-0 mt-2 w-56 bg-white dark:bg-dark-800 rounded-2xl shadow-2xl border border-gray-200/50 dark:border-dark-700 overflow-hidden z-50"
+                  className="absolute right-0 mt-2 w-56 bg-white dark:bg-dark-800 rounded-2xl shadow-2xl border border-gray-200/50 dark:border-dark-700 overflow-hidden z-[1002]"
                   initial={{ opacity: 0, y: -8, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -8, scale: 0.95 }}
@@ -160,11 +173,13 @@ export default function Topbar({ setIsOpen }) {
                     <p className="text-xs text-gray-400 truncate">{user?.email}</p>
                   </div>
                   <div className="p-1.5">
-                    <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-dark-700 rounded-xl transition-colors"
-                      onClick={() => { setShowProfile(false); navigate('/settings/system') }}>
+                    <button type="button" className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-dark-700 rounded-xl transition-colors"
+                      onPointerDown={handleSettings}
+                      onClick={handleSettings}>
                       <Settings className="w-4 h-4" /> Settings
                     </button>
-                    <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors"
+                    <button type="button" className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors"
+                      onPointerDown={handleLogout}
                       onClick={handleLogout}>
                       <LogOut className="w-4 h-4" /> Sign out
                     </button>

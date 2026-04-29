@@ -43,23 +43,31 @@ export default function EnrollmentList() {
   const [filterSY, setFilterSY] = useState('')
   const [gradeLevels, setGradeLevels] = useState([])
   const [schoolYears, setSchoolYears] = useState([])
+  const [lookupsLoaded, setLookupsLoaded] = useState(false)
   const [stats, setStats] = useState({ total: 0, pending: 0, enrolled: 0, dropped: 0 })
 
   useEffect(() => {
-    fetchData()
     fetchLookups()
-  }, [filterStatus, filterGrade, filterSY])
+  }, [])
+
+  useEffect(() => {
+    if (lookupsLoaded) fetchData()
+  }, [lookupsLoaded, filterStatus, filterGrade, filterSY])
 
   const fetchLookups = async () => {
-    const [glRes, syRes] = await Promise.all([
-      supabase.from('grade_levels').select('*').eq('is_active', true).order('level_order'),
-      supabase.from('school_years').select('*').order('start_date', { ascending: false }),
-    ])
-    if (glRes.data) setGradeLevels(glRes.data)
-    if (syRes.data) {
-      setSchoolYears(syRes.data)
-      const active = syRes.data.find(s => s.status === 'active' || s.is_current)
-      if (active && !filterSY) setFilterSY(active.id)
+    try {
+      const [glRes, syRes] = await Promise.all([
+        supabase.from('grade_levels').select('*').eq('is_active', true).order('level_order'),
+        supabase.from('school_years').select('*').order('start_date', { ascending: false }),
+      ])
+      if (glRes.data) setGradeLevels(glRes.data)
+      if (syRes.data) {
+        setSchoolYears(syRes.data)
+        const active = syRes.data.find(s => s.status === 'active' || s.is_current)
+        if (active && !filterSY) setFilterSY(active.id)
+      }
+    } finally {
+      setLookupsLoaded(true)
     }
   }
 
@@ -224,7 +232,7 @@ export default function EnrollmentList() {
           <select className="input-field" value={filterSY} onChange={e => setFilterSY(e.target.value)}>
             <option value="">All School Years</option>
             {schoolYears.map(sy => (
-              <option key={sy.id} value={sy.id}>{sy.year_name}</option>
+              <option key={sy.id} value={sy.id}>{sy.year_name} {sy.status === 'active' || sy.is_current ? '(Active)' : ''}</option>
             ))}
           </select>
         </div>

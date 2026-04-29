@@ -82,6 +82,23 @@ export default function SchoolYearList() {
     setModalOpen(true)
   }
 
+  const setActiveSchoolYear = async (schoolYearId) => {
+    const { error: deactivateError } = await supabase
+      .from('school_years')
+      .update({ is_current: false, status: 'completed' })
+      .neq('id', schoolYearId)
+      .or('is_current.eq.true,status.eq.active')
+
+    if (deactivateError) return deactivateError
+
+    const { error: activateError } = await supabase
+      .from('school_years')
+      .update({ is_current: true, status: 'active' })
+      .eq('id', schoolYearId)
+
+    return activateError
+  }
+
   const handleSave = async () => {
     if (!form.year_name || !form.start_date || !form.end_date) { toast.error('Fill in required fields'); return }
     setSaving(true)
@@ -96,7 +113,7 @@ export default function SchoolYearList() {
       ;({ data: saved, error } = await supabase.from('school_years').insert(savePayload).select('id').single())
     }
     if (!error && shouldSetCurrent && saved?.id) {
-      ;({ error } = await supabase.rpc('set_active_school_year', { p_school_year_id: saved.id }))
+      error = await setActiveSchoolYear(saved.id)
     }
     setSaving(false)
     if (error) { toast.error(error.message); return }
@@ -121,7 +138,7 @@ export default function SchoolYearList() {
       message: 'This will deactivate the current active school year and set "' + row.year_name + '" as active. Continue?',
       fn: async () => {
         setActionLoading(true)
-        const { error } = await supabase.rpc('set_active_school_year', { p_school_year_id: row.id })
+        const error = await setActiveSchoolYear(row.id)
         setActionLoading(false)
         if (error) { toast.error(error.message); return }
         toast.success(row.year_name + ' is now the active school year')

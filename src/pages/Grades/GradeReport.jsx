@@ -109,16 +109,21 @@ export default function GradeReport() {
   }, [])
 
   useEffect(() => {
-    if (selectedSY && selectedSection) fetchGrades()
-    else if (selectedSY && !selectedSection) setGrades([])
+    if (!selectedSY || !selectedSection) {
+      setGrades([])
+      setLoading(false)
+      return
+    }
+    setGrades([])
+    fetchGrades(selectedSY, selectedSection)
   }, [selectedSY, selectedSection])
 
-  const fetchGrades = async () => {
+  const fetchGrades = async (schoolYearId = selectedSY, sectionId = selectedSection) => {
     setLoading(true)
     const { data, error } = await supabase.from('quarterly_grades')
       .select('*, students(id, first_name, last_name, middle_name, lrn), subjects(id, name), quarters(id, quarter_number, name)')
-      .eq('school_year_id', selectedSY)
-      .eq('section_id', selectedSection)
+      .eq('school_year_id', schoolYearId)
+      .eq('section_id', sectionId)
     if (error) { toast.error('Failed to load grades'); console.error(error) }
     else setGrades(data || [])
     setLoading(false)
@@ -292,13 +297,13 @@ export default function GradeReport() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">School Year</label>
-            <select value={selectedSY} onChange={e => { setSelectedSY(e.target.value); setSelectedSection('') }} className="input-field">
-              {schoolYears.map(sy => <option key={sy.id} value={sy.id}>{sy.year_name} {sy.status === 'active' ? '(Active)' : ''}</option>)}
+            <select value={selectedSY} onChange={e => { setSelectedSY(e.target.value); setSelectedSection(''); setGrades([]) }} className="input-field">
+              {schoolYears.map(sy => <option key={sy.id} value={sy.id}>{sy.year_name} {sy.status === 'active' || sy.is_current ? '(Active)' : ''}</option>)}
             </select>
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">Grade Level</label>
-            <select value={selectedGrade} onChange={e => { setSelectedGrade(e.target.value); setSelectedSection('') }} className="input-field">
+            <select value={selectedGrade} onChange={e => { setSelectedGrade(e.target.value); setSelectedSection(''); setGrades([]) }} className="input-field">
               <option value="">All Grades</option>
               {gradeLevels.map(gl => <option key={gl.id} value={gl.id}>{gl.name}</option>)}
             </select>

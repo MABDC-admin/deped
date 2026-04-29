@@ -155,17 +155,25 @@ export default function AttendanceList() {
 
   // Load attendance records when filters change
   useEffect(() => {
-    if (selectedSY) fetchRecords()
+    if (!selectedSY) {
+      setRecords([])
+      setLoading(false)
+      return
+    }
+    setRecords([])
+    setPage(1)
+    fetchRecords(selectedSY)
   }, [selectedSY, selectedGrade, selectedSection, selectedStatus, dateFrom, dateTo])
 
-  const fetchRecords = async () => {
+  const fetchRecords = async (schoolYearId = selectedSY) => {
+    if (!schoolYearId) return
     setLoading(true)
     let query = supabase
       .from('attendance_records')
       .select('*, students(id, first_name, last_name, middle_name, lrn), sections(id, name, grade_level_id)')
       .order('date', { ascending: false })
 
-    if (selectedSY) query = query.eq('school_year_id', selectedSY)
+    query = query.eq('school_year_id', schoolYearId)
     if (selectedSection) query = query.eq('section_id', selectedSection)
     if (selectedStatus) query = query.eq('status', selectedStatus)
     if (dateFrom) query = query.gte('date', dateFrom)
@@ -325,7 +333,7 @@ export default function AttendanceList() {
     setBulkModalOpen(true)
   }
 
-  const loadBulkStudents = async (sectionId) => {
+  const loadBulkStudents = async (sectionId, schoolYearId = bulkSY) => {
     if (!sectionId) { setBulkStudents([]); return }
     setBulkLoading(true)
     // Get students enrolled in this section
@@ -333,7 +341,7 @@ export default function AttendanceList() {
       .from('enrollments')
       .select('student_id, students(id, first_name, last_name, middle_name, lrn)')
       .eq('section_id', sectionId)
-      .eq('school_year_id', bulkSY)
+      .eq('school_year_id', schoolYearId)
       .eq('status', 'enrolled')
       .order('students(last_name)')
 
@@ -479,7 +487,7 @@ export default function AttendanceList() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">School Year</label>
                   <select value={selectedSY} onChange={e => { setSelectedSY(e.target.value); setSelectedSection(''); setPage(1) }} className="input-field text-sm">
                     {schoolYears.map(sy => (
-                      <option key={sy.id} value={sy.id}>{sy.year_name} {sy.status === 'active' ? '(Active)' : ''}</option>
+                      <option key={sy.id} value={sy.id}>{sy.year_name} {sy.status === 'active' || sy.is_current ? '(Active)' : ''}</option>
                     ))}
                   </select>
                 </div>
@@ -859,7 +867,7 @@ export default function AttendanceList() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Section</label>
               <select
                 value={bulkSection}
-                onChange={e => { setBulkSection(e.target.value); loadBulkStudents(e.target.value) }}
+                onChange={e => { setBulkSection(e.target.value); loadBulkStudents(e.target.value, bulkSY) }}
                 className="input-field"
               >
                 <option value="">Select Section</option>

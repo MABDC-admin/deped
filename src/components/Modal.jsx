@@ -14,7 +14,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div className="fixed inset-0 z-[1100] overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4">
             <motion.div
               className="fixed inset-0 bg-black/50"

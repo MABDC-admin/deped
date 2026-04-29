@@ -39,7 +39,8 @@ export default function Sidebar({ isOpen, setIsOpen }) {
     } catch (err) {
       console.error('Logout error:', err);
     }
-    navigate('/login');
+    setIsOpen(false);
+    navigate('/login', { replace: true });
   };
 
   const firstName = user?.user_metadata?.first_name || user?.email?.split('@')[0] || 'User';

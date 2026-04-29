@@ -1,7 +1,14 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { isSupabaseConfigured, supabase } from '../lib/supabase'
 
-const AuthContext = createContext({})
+const AuthContext = createContext({
+  user: null,
+  role: null,
+  loading: true,
+  login: async () => {},
+  logout: async () => {},
+  isSupabaseConfigured,
+})
 
 export const useAuth = () => useContext(AuthContext)
 
@@ -11,6 +18,11 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setLoading(false)
+      return
+    }
+
     let mounted = true
 
     const getTrustedRole = async (sessionUser) => {
@@ -58,24 +70,31 @@ export function AuthProvider({ children }) {
   }, [])
 
   const login = async (email, password) => {
+    if (!isSupabaseConfigured) {
+      throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local, then restart the dev server.')
+    }
+
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
     return data
   }
 
   const logout = async () => {
+    setUser(null)
+    setRole(null)
+    setLoading(false)
+
+    if (!isSupabaseConfigured) return
+
     try {
-      await supabase.auth.signOut()
+      await supabase.auth.signOut({ scope: 'local' })
     } catch (err) {
       console.error('Sign out error:', err)
     }
-    // Always clear state, even if signOut API fails
-    setUser(null)
-    setRole(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, role, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, role, loading, login, logout, isSupabaseConfigured }}>
       {children}
     </AuthContext.Provider>
   )

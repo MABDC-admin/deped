@@ -4,6 +4,10 @@ import { supabase } from '../../utils/supabase';
 import GlassCard from '../../components/ui/GlassCard';
 import SkeletonLoader from '../../components/ui/SkeletonLoader';
 import EmptyState from '../../components/ui/EmptyState';
+import Modal from '../../components/Modal';
+import ConfirmDialog from '../../components/ConfirmDialog';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 const DAYS = [
   { value: 1, label: 'Monday' },
@@ -23,47 +27,158 @@ const SUBJECT_COLORS = [
   'bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700',
   'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-700',
 ];
+const emptyForm = {
+  school_year_id: '',
+  section_id: '',
+  subject_id: '',
+  teacher_id: '',
+  day_of_week: 1,
+  start_time: '07:00',
+  end_time: '08:00',
+  room: '',
+};
 
 const ClassSchedule = () => {
   const [schedules, setSchedules] = useState([]);
   const [sections, setSections] = useState([]);
+  const [allSections, setAllSections] = useState([]);
+  const [schoolYears, setSchoolYears] = useState([]);
+  const [subjects, setSubjects] = useState([]);
+  const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refsLoaded, setRefsLoaded] = useState(false);
+  const [selectedSY, setSelectedSY] = useState('');
   const [selectedSection, setSelectedSection] = useState('all');
   const [view, setView] = useState('timetable');
+  const [form, setForm] = useState(emptyForm);
+  const [editId, setEditId] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchLookups(); }, []);
 
-  const fetchData = async () => {
+  useEffect(() => {
+    if (!refsLoaded) return;
+    if (!selectedSY) {
+      setSchedules([]);
+      setSections([]);
+      setLoading(false);
+      return;
+    }
+    fetchScheduleRecords(selectedSY);
+  }, [refsLoaded, selectedSY]);
+
+  const fetchLookups = async () => {
     setLoading(true);
     try {
-      const { data: activeYear } = await supabase
-        .from('school_years')
-        .select('id')
-        .eq('is_current', true)
-        .maybeSingle();
+      const [syRes, subRes, teacherRes, secRes] = await Promise.all([
+        supabase.from('school_years').select('id, year_name, is_current, status').order('start_date', { ascending: false }),
+        supabase.from('subjects').select('id, name, short_name').eq('is_active', true).order('name'),
+        supabase.from('user_profiles').select('id, first_name, last_name').eq('role', 'teacher').order('last_name'),
+        supabase.from('sections').select('id, name, school_year_id, grade_levels(name)').order('name'),
+      ]);
+      const years = syRes.data || [];
+      setSchoolYears(years);
+      setSubjects(subRes.data || []);
+      setTeachers(teacherRes.data || []);
+      setAllSections(secRes.data || []);
+      const active = years.find(y => y.is_current || y.status === 'active') || years[0];
+      if (active) setSelectedSY(active.id);
+    } catch (err) { console.error(err); toast.error('Failed to load schedules'); }
+    finally { setRefsLoaded(true); }
+  };
 
-      let schedulesQuery = supabase
-        .from('class_schedules')
-        .select('*, sections(name, grade_levels(name)), subjects(name, short_name), teacher:teacher_profiles(user_id, user_profiles(first_name, last_name))')
-        .order('day_of_week');
-      let sectionsQuery = supabase
-        .from('sections')
-        .select('id, name, school_year_id, grade_levels(name)')
-        .order('name');
-
-      if (activeYear?.id) {
-        schedulesQuery = schedulesQuery.eq('school_year_id', activeYear.id);
-        sectionsQuery = sectionsQuery.eq('school_year_id', activeYear.id);
-      }
-
+  const fetchScheduleRecords = async (schoolYearId = selectedSY) => {
+    if (!schoolYearId) return;
+    setLoading(true);
+    try {
       const [schedRes, secRes] = await Promise.all([
-        schedulesQuery,
-        sectionsQuery,
+        supabase
+          .from('class_schedules')
+          .select('*, sections(name, grade_levels(name)), subjects(name, short_name), teacher:user_profiles!teacher_id(id, first_name, last_name)')
+          .eq('school_year_id', schoolYearId)
+          .order('day_of_week'),
+        supabase
+          .from('sections')
+          .select('id, name, school_year_id, grade_levels(name)')
+          .eq('school_year_id', schoolYearId)
+          .order('name'),
       ]);
       setSchedules(schedRes.data || []);
       setSections(secRes.data || []);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); toast.error('Failed to load schedules'); }
     finally { setLoading(false); }
+  };
+
+  const activeYearId = selectedSY || schoolYears.find(y => y.is_current || y.status === 'active')?.id || '';
+
+  const openAdd = () => {
+    setForm({ ...emptyForm, school_year_id: activeYearId, section_id: selectedSection === 'all' ? '' : selectedSection });
+    setEditId(null);
+    setModalOpen(true);
+  };
+
+  const openEdit = (schedule) => {
+    setForm({
+      school_year_id: schedule.school_year_id || activeYearId,
+      section_id: schedule.section_id || '',
+      subject_id: schedule.subject_id || '',
+      teacher_id: schedule.teacher_id || '',
+      day_of_week: Number(schedule.day_of_week) || 1,
+      start_time: schedule.start_time?.slice(0, 5) || '07:00',
+      end_time: schedule.end_time?.slice(0, 5) || '08:00',
+      room: schedule.room || '',
+    });
+    setEditId(schedule.id);
+    setModalOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.school_year_id || !form.section_id || !form.subject_id || !form.teacher_id || !form.start_time || !form.end_time) {
+      toast.error('Complete all required schedule fields');
+      return;
+    }
+    if (form.start_time >= form.end_time) {
+      toast.error('End time must be later than start time');
+      return;
+    }
+
+    setSaving(true);
+    const payload = {
+      school_year_id: form.school_year_id,
+      section_id: form.section_id,
+      subject_id: form.subject_id,
+      teacher_id: form.teacher_id,
+      day_of_week: Number(form.day_of_week),
+      start_time: form.start_time,
+      end_time: form.end_time,
+      room: form.room || null,
+    };
+    const { error } = editId
+      ? await supabase.from('class_schedules').update(payload).eq('id', editId)
+      : await supabase.from('class_schedules').insert(payload);
+    setSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(editId ? 'Schedule updated' : 'Schedule created');
+    setModalOpen(false);
+    if (payload.school_year_id !== selectedSY) {
+      setSelectedSY(payload.school_year_id);
+      setSelectedSection(payload.section_id);
+    } else {
+      fetchScheduleRecords(payload.school_year_id);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    const { error } = await supabase.from('class_schedules').delete().eq('id', deleteId);
+    setDeleting(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success('Schedule deleted');
+    setDeleteId(null);
+    fetchScheduleRecords();
   };
 
   const filteredSchedules = useMemo(() => {
@@ -119,6 +234,12 @@ const ClassSchedule = () => {
       {/* Controls */}
       <GlassCard className="p-4">
         <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+          <select value={selectedSY} onChange={e => { setSelectedSY(e.target.value); setSelectedSection('all'); setSchedules([]); setSections([]); }}
+            className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-gray-800/50 outline-none">
+            {schoolYears.map(y => (
+              <option key={y.id} value={y.id}>{y.year_name} {y.is_current || y.status === 'active' ? '(Active)' : ''}</option>
+            ))}
+          </select>
           <select value={selectedSection} onChange={e => setSelectedSection(e.target.value)}
             className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-gray-800/50 outline-none">
             <option value="all">All Sections</option>
@@ -132,6 +253,9 @@ const ClassSchedule = () => {
               </button>
             ))}
           </div>
+          <button onClick={openAdd} className="btn-primary flex items-center gap-2">
+            <Plus className="w-4 h-4" /> Add Schedule
+          </button>
         </div>
       </GlassCard>
 
@@ -159,12 +283,12 @@ const ClassSchedule = () => {
                     return (
                       <div key={`${day.value}-${time}`} className="relative rounded-lg overflow-hidden min-h-[2.5rem]">
                         {slots.map((slot, si) => (
-                          <div key={si} className={`absolute inset-0 px-2 py-1 text-xs border-l-3 ${subjectColorMap[slot.subject_id] || SUBJECT_COLORS[0]} flex flex-col justify-center`}>
+                          <button key={slot.id || si} onClick={() => openEdit(slot)} className={`absolute inset-0 px-2 py-1 text-xs border-l-3 text-left ${subjectColorMap[slot.subject_id] || SUBJECT_COLORS[0]} flex flex-col justify-center`}>
                             <span className="font-semibold truncate">{slot.subjects?.short_name || slot.subjects?.name}</span>
-                            {slot.teacher?.user_profiles && (
-                              <span className="text-[10px] opacity-70 truncate">{slot.teacher.user_profiles.last_name}</span>
+                            {slot.teacher && (
+                              <span className="text-[10px] opacity-70 truncate">{slot.teacher.last_name}</span>
                             )}
-                          </div>
+                          </button>
                         ))}
                       </div>
                     );
@@ -180,7 +304,7 @@ const ClassSchedule = () => {
             <table className="w-full">
               <thead className="bg-gray-50/80 dark:bg-gray-800/80">
                 <tr>
-                  {['Day', 'Time', 'Subject', 'Section', 'Teacher', 'Room'].map(h => (
+                  {['Day', 'Time', 'Subject', 'Section', 'Teacher', 'Room', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
                   ))}
                 </tr>
@@ -195,8 +319,14 @@ const ClassSchedule = () => {
                       <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${subjectColorMap[sched.subject_id] || ''}`}>{sched.subjects?.name || '—'}</span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{sched.sections?.grade_levels?.name} - {sched.sections?.name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{sched.teacher?.user_profiles ? `${sched.teacher.user_profiles.first_name} ${sched.teacher.user_profiles.last_name}` : '—'}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{sched.teacher ? `${sched.teacher.first_name} ${sched.teacher.last_name}` : '—'}</td>
                     <td className="px-4 py-3 text-sm text-gray-500">{sched.room || '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => openEdit(sched)} className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50" title="Edit"><Pencil className="w-4 h-4" /></button>
+                        <button onClick={() => setDeleteId(sched.id)} className="p-1.5 rounded-lg text-red-600 hover:bg-red-50" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </td>
                   </motion.tr>
                 ))}
               </tbody>
@@ -204,6 +334,72 @@ const ClassSchedule = () => {
           </div>
         </GlassCard>
       )}
+
+      <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={editId ? 'Edit Schedule' : 'Add Schedule'} size="lg">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">School Year</label>
+              <select className="input-field" value={form.school_year_id} onChange={e => setForm({ ...form, school_year_id: e.target.value, section_id: '' })}>
+                <option value="">Select...</option>
+                {schoolYears.map(y => <option key={y.id} value={y.id}>{y.year_name} {y.is_current || y.status === 'active' ? '(Active)' : ''}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Section</label>
+              <select className="input-field" value={form.section_id} onChange={e => setForm({ ...form, section_id: e.target.value })}>
+                <option value="">Select...</option>
+                {allSections.filter(s => !form.school_year_id || s.school_year_id === form.school_year_id).map(s => <option key={s.id} value={s.id}>{s.grade_levels?.name} - {s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+              <select className="input-field" value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}>
+                <option value="">Select...</option>
+                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Teacher</label>
+              <select className="input-field" value={form.teacher_id} onChange={e => setForm({ ...form, teacher_id: e.target.value })}>
+                <option value="">Select...</option>
+                {teachers.map(t => <option key={t.id} value={t.id}>{t.last_name}, {t.first_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Day</label>
+              <select className="input-field" value={form.day_of_week} onChange={e => setForm({ ...form, day_of_week: e.target.value })}>
+                {DAYS.map(day => <option key={day.value} value={day.value}>{day.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Room</label>
+              <input className="input-field" value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+              <input type="time" className="input-field" value={form.start_time} onChange={e => setForm({ ...form, start_time: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+              <input type="time" className="input-field" value={form.end_time} onChange={e => setForm({ ...form, end_time: e.target.value })} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button className="btn-secondary" onClick={() => setModalOpen(false)}>Cancel</button>
+            <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+          </div>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={!!deleteId}
+        onClose={() => setDeleteId(null)}
+        onConfirm={handleDelete}
+        loading={deleting}
+        title="Delete Schedule"
+        message="Delete this class schedule? This cannot be undone."
+      />
     </div>
   );
 };

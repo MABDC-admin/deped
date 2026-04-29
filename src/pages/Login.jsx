@@ -19,7 +19,7 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  const { login } = useAuth()
+  const { login, isSupabaseConfigured } = useAuth()
   const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
@@ -113,6 +113,11 @@ export default function Login() {
             Sign in to your account
           </motion.p>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {!isSupabaseConfigured && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local, then restart the dev server.
+              </div>
+            )}
             <motion.div custom={0} variants={formFieldVariants} initial="hidden" animate="visible">
               <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
               <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
