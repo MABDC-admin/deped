@@ -8,12 +8,13 @@ import {
   ArrowUpRight, ArrowRight, Eye, Edit3, Trash2, MoreHorizontal,
   TrendingUp, BarChart3, RefreshCw, X, Check, AlertTriangle,
   FileCheck, FilePlus, FileSearch, Folder, FolderOpen, Archive,
-  Mail, Phone, MapPin, Hash, User, ChevronLeft
+  Mail, Phone, MapPin, Hash, User, ChevronLeft, Heart, Activity, History
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { GlassCard, AnimatedCounter, AnimatedBadge } from '../../components/ui';
+import toast from 'react-hot-toast';
 
 const fadeUp = {
   initial: { opacity: 0, y: 20 },
@@ -44,12 +45,13 @@ export default function RegistrarRecords() {
   const { isDark } = useTheme();
 
   // Data states
-  const [students, setStudents] = useState([]);
   const [enrollments, setEnrollments] = useState([]);
+  const [documentsByEnrollment, setDocumentsByEnrollment] = useState({});
   const [gradeLevels, setGradeLevels] = useState([]);
   const [sections, setSections] = useState([]);
   const [activeYear, setActiveYear] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
 
   // UI states
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,13 +62,15 @@ export default function RegistrarRecords() {
   const [sortDir, setSortDir] = useState('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const [showDocPanel, setShowDocPanel] = useState(false);
+  const [recordDetails, setRecordDetails] = useState({ guardians: [], emergencyContacts: [], history: [] });
+  const [detailLoading, setDetailLoading] = useState(false);
   const itemsPerPage = 15;
 
   // Stats
   const [stats, setStats] = useState({
     totalRecords: 0, enrolledCount: 0, pendingCount: 0, droppedCount: 0,
     withSection: 0, withoutSection: 0, maleCount: 0, femaleCount: 0,
+    documentSubmitted: 0, documentExpected: 0,
   });
 
   useEffect(() => { fetchData(); }, []);
@@ -74,6 +78,7 @@ export default function RegistrarRecords() {
   const fetchData = async () => {
     try {
       setLoading(true);
+      setFetchError('');
       const { data: yearData } = await supabase
         .from('school_years')
         .select('id, year_name')
@@ -84,7 +89,7 @@ export default function RegistrarRecords() {
       setActiveYear(yearData);
 
       let enrollQuery = supabase.from('enrollments')
-        .select('id, status, enrollment_date, enrollment_type, grade_level_id, section_id, student_id, students(id, first_name, middle_name, last_name, suffix, lrn, gender, birth_date, house_no, street, barangay, city_municipality, province, zip_code, contact_number, email), grade_levels(id, name, level_order), sections(id, name)')
+        .select('id, school_year_id, status, enrollment_date, enrollment_type, learning_modality, remarks, grade_level_id, section_id, student_id, created_at, students(id, first_name, middle_name, last_name, suffix, lrn, gender, birth_date, birth_place, nationality, religion, mother_tongue, psa_birth_cert_no, is_4ps_beneficiary, is_indigenous_people, is_pwd, disability_type, is_solo_parent_child, medical_conditions, allergies, immunization_status, house_no, street, barangay, city_municipality, province, zip_code, contact_number, email, status), grade_levels(id, name, level_order), sections(id, name)')
         .order('enrollment_date', { ascending: false });
       let sectionsQuery = supabase.from('sections')
         .select('id, name, grade_level_id, grade_levels(name)')
@@ -112,7 +117,23 @@ export default function RegistrarRecords() {
       if (secRes.error) throw secRes.error;
 
       const enrollments = enrollRes.data || [];
+      const enrollmentIds = enrollments.map(e => e.id);
+      const { data: documentRows, error: docError } = enrollmentIds.length > 0
+        ? await supabase
+            .from('enrollment_documents')
+            .select('*')
+            .in('enrollment_id', enrollmentIds)
+        : { data: [], error: null };
+      if (docError) throw docError;
+
+      const nextDocumentsByEnrollment = (documentRows || []).reduce((acc, doc) => {
+        if (!acc[doc.enrollment_id]) acc[doc.enrollment_id] = [];
+        acc[doc.enrollment_id].push(doc);
+        return acc;
+      }, {});
+
       setEnrollments(enrollments);
+      setDocumentsByEnrollment(nextDocumentsByEnrollment);
       setGradeLevels(glRes.data || []);
       setSections(secRes.data || []);
 
@@ -123,6 +144,8 @@ export default function RegistrarRecords() {
       const withoutSection = enrollments.filter(e => !e.section_id).length;
       const maleCount = enrollments.filter(e => e.students?.gender === 'Male').length;
       const femaleCount = enrollments.filter(e => e.students?.gender === 'Female').length;
+      const documentSubmitted = (documentRows || []).filter(d => d.is_submitted).length;
+      const documentExpected = enrollments.length * DOCUMENT_TYPES.length;
 
       setStats({
         totalRecords: enrollments.length,
@@ -133,13 +156,63 @@ export default function RegistrarRecords() {
         withoutSection,
         maleCount,
         femaleCount,
+        documentSubmitted,
+        documentExpected,
       });
     } catch (err) {
       console.error('Error fetching records:', err);
+      setFetchError(err.message || 'Unable to load registrar records.');
+      toast.error('Records Office data failed to load');
     } finally {
       setLoading(false);
     }
   };
+
+  const fetchRecordDetails = useCallback(async (record) => {
+    if (!record?.student_id) {
+      setRecordDetails({ guardians: [], emergencyContacts: [], history: [] });
+      return;
+    }
+
+    setDetailLoading(true);
+    try {
+      const [guardianRes, emergencyRes, historyRes] = await Promise.all([
+        supabase
+          .from('student_guardians')
+          .select('is_primary, guardians(id, first_name, middle_name, last_name, relationship, contact_number, email, occupation, office_address, office_contact, is_emergency_contact)')
+          .eq('student_id', record.student_id),
+        supabase
+          .from('emergency_contacts')
+          .select('id, full_name, relationship, contact_number, alt_contact_number, address, is_primary')
+          .eq('student_id', record.student_id)
+          .order('is_primary', { ascending: false }),
+        supabase
+          .from('enrollments')
+          .select('id, status, enrollment_date, enrollment_type, school_year_id, school_years(year_name, is_current), grade_levels(name), sections(name)')
+          .eq('student_id', record.student_id)
+          .order('enrollment_date', { ascending: false }),
+      ]);
+
+      if (guardianRes.error) throw guardianRes.error;
+      if (emergencyRes.error) throw emergencyRes.error;
+      if (historyRes.error) throw historyRes.error;
+
+      setRecordDetails({
+        guardians: (guardianRes.data || []).map(row => ({
+          ...row.guardians,
+          is_primary: row.is_primary,
+        })).filter(Boolean),
+        emergencyContacts: emergencyRes.data || [],
+        history: historyRes.data || [],
+      });
+    } catch (err) {
+      console.error('Error fetching selected record details:', err);
+      toast.error('Selected student file failed to load');
+      setRecordDetails({ guardians: [], emergencyContacts: [], history: [] });
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
 
   // Filtered and sorted records
   const filteredRecords = useMemo(() => {
@@ -214,6 +287,171 @@ export default function RegistrarRecords() {
   );
 
   useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, gradeFilter, sectionFilter]);
+  useEffect(() => { fetchRecordDetails(selectedStudent); }, [selectedStudent, fetchRecordDetails]);
+
+  const selectedDocuments = selectedStudent ? documentsByEnrollment[selectedStudent.id] || [] : [];
+  const selectedSubmittedCount = selectedDocuments.filter(doc => doc.is_submitted).length;
+  const selectedAddress = selectedStudent?.students
+    ? [
+        selectedStudent.students.house_no,
+        selectedStudent.students.street,
+        selectedStudent.students.barangay,
+        selectedStudent.students.city_municipality,
+        selectedStudent.students.province,
+        selectedStudent.students.zip_code,
+      ].filter(Boolean).join(', ')
+    : '';
+  const documentCompletionRate = stats.documentExpected > 0
+    ? Math.round((stats.documentSubmitted / stats.documentExpected) * 100)
+    : 0;
+
+  const formatDate = (dateValue) => {
+    if (!dateValue) return '—';
+    return new Date(dateValue).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  const handleRecordSelect = (record) => {
+    setSelectedStudent(current => current?.id === record.id ? null : record);
+  };
+
+  const handleDocumentToggle = async (docType, isSubmitted) => {
+    if (!selectedStudent) return;
+
+    const existing = selectedDocuments.find(doc => doc.document_type === docType.id);
+    const payload = {
+      enrollment_id: selectedStudent.id,
+      student_id: selectedStudent.student_id,
+      document_type: docType.id,
+      document_name: docType.name,
+      is_submitted: isSubmitted,
+      submitted_date: isSubmitted ? new Date().toISOString().split('T')[0] : null,
+      verified_by: isSubmitted ? user?.id : null,
+      verified_at: isSubmitted ? new Date().toISOString() : null,
+    };
+
+    try {
+      const { data, error } = existing
+        ? await supabase
+            .from('enrollment_documents')
+            .update(payload)
+            .eq('id', existing.id)
+            .select()
+            .single()
+        : await supabase
+            .from('enrollment_documents')
+            .insert(payload)
+            .select()
+            .single();
+
+      if (error) throw error;
+
+      setDocumentsByEnrollment(prev => {
+        const currentDocs = prev[selectedStudent.id] || [];
+        const nextDocs = existing
+          ? currentDocs.map(doc => doc.id === existing.id ? data : doc)
+          : [...currentDocs, data];
+
+        return { ...prev, [selectedStudent.id]: nextDocs };
+      });
+
+      setStats(prev => ({
+        ...prev,
+        documentSubmitted: prev.documentSubmitted + (isSubmitted && !existing?.is_submitted ? 1 : 0) - (!isSubmitted && existing?.is_submitted ? 1 : 0),
+      }));
+
+      toast.success(`${docType.name} ${isSubmitted ? 'marked submitted' : 'cleared'}`);
+    } catch (err) {
+      console.error('Error updating document:', err);
+      toast.error('Document status was not saved');
+    }
+  };
+
+  const handleStatusUpdate = async (newStatus) => {
+    if (!selectedStudent) return;
+
+    try {
+      const updates = { status: newStatus };
+      if (newStatus === 'enrolled') updates.approved_at = new Date().toISOString();
+      if (newStatus === 'dropped') updates.date_dropped = new Date().toISOString().split('T')[0];
+
+      const { data, error } = await supabase
+        .from('enrollments')
+        .update(updates)
+        .eq('id', selectedStudent.id)
+        .select('id, status, enrollment_date, enrollment_type, learning_modality, remarks, grade_level_id, section_id, student_id, school_year_id, created_at, students(id, first_name, middle_name, last_name, suffix, lrn, gender, birth_date, birth_place, nationality, religion, mother_tongue, psa_birth_cert_no, is_4ps_beneficiary, is_indigenous_people, is_pwd, disability_type, is_solo_parent_child, medical_conditions, allergies, immunization_status, house_no, street, barangay, city_municipality, province, zip_code, contact_number, email, status), grade_levels(id, name, level_order), sections(id, name)')
+        .single();
+
+      if (error) throw error;
+
+      setEnrollments(prev => prev.map(record => record.id === data.id ? data : record));
+      setSelectedStudent(data);
+      toast.success(`Enrollment status updated to ${newStatus}`);
+      fetchData();
+    } catch (err) {
+      console.error('Error updating enrollment status:', err);
+      toast.error('Enrollment status was not saved');
+    }
+  };
+
+  const handlePrintDocument = (docType) => {
+    if (!selectedStudent) return;
+
+    const student = selectedStudent.students || {};
+    const fullName = `${student.first_name || ''} ${student.middle_name || ''} ${student.last_name || ''} ${student.suffix || ''}`.replace(/\s+/g, ' ').trim();
+    const printable = window.open('', '_blank', 'width=900,height=700');
+    if (!printable) {
+      toast.error('Allow popups to print the document');
+      return;
+    }
+
+    printable.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>${escapeHtml(docType.name)} - ${escapeHtml(fullName)}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 48px; color: #111827; }
+            .sheet { max-width: 760px; margin: 0 auto; border: 1px solid #d1d5db; padding: 40px; min-height: 860px; }
+            .center { text-align: center; }
+            h1 { font-size: 22px; letter-spacing: 1px; margin: 28px 0 12px; text-transform: uppercase; }
+            h2 { font-size: 16px; margin: 0; font-weight: 600; }
+            p { font-size: 15px; line-height: 1.8; }
+            .meta { margin-top: 28px; display: grid; gap: 8px; font-size: 14px; }
+            .signature { margin-top: 96px; display: flex; justify-content: flex-end; }
+            .line { min-width: 240px; border-top: 1px solid #111827; text-align: center; padding-top: 8px; }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">
+            <div class="center">
+              <h2>MABDC Student Management System</h2>
+              <p>Records Office</p>
+              <h1>${escapeHtml(docType.name)}</h1>
+            </div>
+            <p>This document certifies that <strong>${escapeHtml(fullName || 'the student')}</strong>, LRN <strong>${escapeHtml(student.lrn || 'N/A')}</strong>, is recorded in the school system for <strong>${escapeHtml(activeYear?.year_name || 'the current school year')}</strong>.</p>
+            <div class="meta">
+              <div><strong>Grade Level:</strong> ${escapeHtml(selectedStudent.grade_levels?.name || 'N/A')}</div>
+              <div><strong>Section:</strong> ${escapeHtml(selectedStudent.sections?.name || 'Unassigned')}</div>
+              <div><strong>Enrollment Status:</strong> ${escapeHtml(selectedStudent.status || 'N/A')}</div>
+              <div><strong>Enrollment Date:</strong> ${escapeHtml(formatDate(selectedStudent.enrollment_date))}</div>
+              <div><strong>Date Issued:</strong> ${escapeHtml(formatDate(new Date().toISOString()))}</div>
+            </div>
+            <div class="signature">
+              <div class="line">Registrar / Records Officer</div>
+            </div>
+          </div>
+          <script>window.onload = () => window.print();</script>
+        </body>
+      </html>
+    `);
+    printable.document.close();
+  };
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -298,6 +536,10 @@ export default function RegistrarRecords() {
                   <Clock className="w-4 h-4" />
                   <AnimatedCounter value={stats.pendingCount} /> Pending
                 </div>
+                <div className="px-3 py-1.5 bg-white/15 backdrop-blur-sm rounded-lg text-sm font-medium flex items-center gap-2">
+                  <FileCheck className="w-4 h-4" />
+                  {documentCompletionRate}% Docs
+                </div>
                 {stats.withoutSection > 0 && (
                   <div className="px-3 py-1.5 bg-amber-500/30 backdrop-blur-sm rounded-lg text-sm font-medium flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4" />
@@ -310,13 +552,23 @@ export default function RegistrarRecords() {
         </div>
       </motion.div>
 
+      {fetchError && (
+        <motion.div {...fadeUp}>
+          <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-300 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>{fetchError}</span>
+          </div>
+        </motion.div>
+      )}
+
       {/* ── Quick Stats Row ── */}
-      <motion.div variants={stagger} initial="initial" animate="animate" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <motion.div variants={stagger} initial="initial" animate="animate" className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {[
           { label: 'Total Records', value: stats.totalRecords, icon: Folder, gradient: 'from-blue-500 to-cyan-500', glow: 'shadow-blue-500/20' },
           { label: 'Enrolled', value: stats.enrolledCount, icon: CheckCircle2, gradient: 'from-emerald-500 to-teal-500', glow: 'shadow-emerald-500/20' },
           { label: 'Pending', value: stats.pendingCount, icon: Clock, gradient: 'from-amber-500 to-orange-500', glow: 'shadow-amber-500/20' },
           { label: 'Dropped', value: stats.droppedCount, icon: AlertCircle, gradient: 'from-red-500 to-rose-500', glow: 'shadow-red-500/20' },
+          { label: 'Docs Complete', value: documentCompletionRate, icon: FileCheck, gradient: 'from-violet-500 to-fuchsia-500', glow: 'shadow-violet-500/20', suffix: '%' },
         ].map((stat, i) => (
           <motion.div key={i} variants={fadeUp}>
             <GlassCard className={`p-4 hover:shadow-lg hover:${stat.glow} transition-all duration-300`}>
@@ -325,6 +577,7 @@ export default function RegistrarRecords() {
                   <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{stat.label}</p>
                   <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-white">
                     <AnimatedCounter value={stat.value} />
+                    {stat.suffix || ''}
                   </p>
                 </div>
                 <div className={`p-2.5 rounded-xl bg-gradient-to-br ${stat.gradient} shadow-lg`}>
@@ -336,7 +589,7 @@ export default function RegistrarRecords() {
         ))}
       </motion.div>
 
-      {/* ── Document Generation Tools ── */}
+      {/* ── Records Office Actions ── */}
       <motion.div {...fadeUp} transition={{ delay: 0.15 }}>
         <GlassCard className="overflow-hidden">
           <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-5 py-3.5 flex items-center justify-between">
@@ -344,9 +597,11 @@ export default function RegistrarRecords() {
               <div className="p-1.5 bg-white/20 rounded-lg">
                 <FileText className="w-4.5 h-4.5 text-white" />
               </div>
-              <h3 className="font-semibold text-white">Document Generation</h3>
+              <h3 className="font-semibold text-white">Records Office Actions</h3>
             </div>
-            <span className="text-xs text-white/70">Select a student below, then generate</span>
+            <span className="text-xs text-white/70">
+              {selectedStudent ? `${selectedSubmittedCount}/${DOCUMENT_TYPES.length} requirements submitted` : `${stats.documentSubmitted}/${stats.documentExpected} requirements submitted`}
+            </span>
           </div>
           <div className="p-4">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -371,19 +626,19 @@ export default function RegistrarRecords() {
                 return (
                   <button
                     key={doc.id}
-                    onClick={() => {
-                      if (selectedStudent) {
-                        setShowDocPanel(true);
-                      }
-                    }}
+                    onClick={() => selectedStudent && handlePrintDocument(doc)}
                     className={`group relative p-3.5 rounded-xl border-2 border-gray-200 dark:border-gray-700 transition-all duration-200 text-left ${colorMap[doc.color]} ${!selectedStudent ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                     disabled={!selectedStudent}
+                    title={selectedStudent ? `Print ${doc.name}` : 'Select a student first'}
                   >
                     <div className={`p-2 rounded-lg ${iconBg[doc.color]} w-fit mb-2`}>
                       <Icon className="w-4.5 h-4.5" />
                     </div>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white">{doc.name}</p>
                     <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">{doc.desc}</p>
+                    {selectedStudent && selectedDocuments.some(item => item.document_type === doc.id && item.is_submitted) && (
+                      <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    )}
                   </button>
                 );
               })}
@@ -402,7 +657,7 @@ export default function RegistrarRecords() {
             )}
             {!selectedStudent && (
               <p className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-400 dark:text-gray-500 italic">
-                💡 Click on a student row below to select them for document generation
+                Select a student row to activate record actions
               </p>
             )}
           </div>
@@ -523,7 +778,7 @@ export default function RegistrarRecords() {
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
                           transition={{ delay: idx * 0.02 }}
-                          onClick={() => setSelectedStudent(isSelected ? null : record)}
+                          onClick={() => handleRecordSelect(record)}
                           className={`group cursor-pointer transition-colors duration-150 ${
                             isSelected
                               ? 'bg-teal-50 dark:bg-teal-900/20 border-l-4 border-l-teal-500'
@@ -565,14 +820,14 @@ export default function RegistrarRecords() {
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
-                                onClick={(e) => { e.stopPropagation(); navigate(`/students`); }}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/students/${record.student_id}`); }}
                                 className="p-1.5 rounded-lg hover:bg-teal-100 dark:hover:bg-teal-900/30 text-gray-400 hover:text-teal-600 transition-colors"
                                 title="View Profile"
                               >
                                 <Eye className="w-4 h-4" />
                               </button>
                               <button
-                                onClick={(e) => { e.stopPropagation(); navigate(`/enrollment`); }}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/enrollment/${record.id}/edit`); }}
                                 className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-gray-400 hover:text-blue-600 transition-colors"
                                 title="Edit Enrollment"
                               >
@@ -649,6 +904,245 @@ export default function RegistrarRecords() {
           </div>
         </GlassCard>
       </motion.div>
+
+      {/* ── Registrar Work Panel ── */}
+      <AnimatePresence>
+        {selectedStudent && (
+          <motion.div
+            {...fadeUp}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ delay: 0.1 }}
+          >
+            <GlassCard className="overflow-hidden">
+              <div className="bg-gradient-to-r from-slate-800 to-teal-800 px-5 py-4 text-white">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${getInitialColor(`${selectedStudent.students?.last_name} ${selectedStudent.students?.first_name}`)} flex items-center justify-center text-white text-sm font-bold shadow-sm`}>
+                      {getInitials(selectedStudent.students?.first_name, selectedStudent.students?.last_name)}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">
+                        {selectedStudent.students?.last_name}, {selectedStudent.students?.first_name} {selectedStudent.students?.middle_name || ''}
+                      </h3>
+                      <p className="text-white/75 text-sm">
+                        LRN {selectedStudent.students?.lrn || 'N/A'} • {selectedStudent.grade_levels?.name || 'No grade'} • {selectedStudent.sections?.name || 'Unassigned'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => navigate(`/students/${selectedStudent.student_id}`)}
+                      className="px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-sm font-medium flex items-center gap-2 transition-colors"
+                    >
+                      <Eye className="w-4 h-4" /> Student File
+                    </button>
+                    <button
+                      onClick={() => navigate(`/enrollment/${selectedStudent.id}`)}
+                      className="px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-sm font-medium flex items-center gap-2 transition-colors"
+                    >
+                      <FileSearch className="w-4 h-4" /> Enrollment
+                    </button>
+                    <button
+                      onClick={() => navigate(`/enrollment/${selectedStudent.id}/edit`)}
+                      className="px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-sm font-medium flex items-center gap-2 transition-colors"
+                    >
+                      <Edit3 className="w-4 h-4" /> Edit
+                    </button>
+                    <button
+                      onClick={() => setSelectedStudent(null)}
+                      className="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-5">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Enrollment Status', value: selectedStudent.status || 'pending', icon: Shield },
+                    { label: 'Enrollment Date', value: formatDate(selectedStudent.enrollment_date), icon: Calendar },
+                    { label: 'Learning Modality', value: selectedStudent.learning_modality?.replace('_', ' ') || 'N/A', icon: BookOpen },
+                    { label: 'Documents', value: `${selectedSubmittedCount}/${DOCUMENT_TYPES.length} submitted`, icon: FileCheck },
+                  ].map(item => {
+                    const Icon = item.icon;
+                    return (
+                      <div key={item.label} className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 bg-white dark:bg-gray-800/60">
+                        <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider">
+                          <Icon className="w-3.5 h-3.5" />
+                          {item.label}
+                        </div>
+                        <p className="mt-1.5 text-sm font-semibold text-gray-900 dark:text-white capitalize">{item.value}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                  <div className="xl:col-span-2 space-y-5">
+                    <section>
+                      <div className="flex items-center gap-2 mb-3">
+                        <User className="w-4 h-4 text-teal-600" />
+                        <h4 className="font-semibold text-gray-900 dark:text-white">Student Record</h4>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                        {[
+                          ['Birth Date', formatDate(selectedStudent.students?.birth_date)],
+                          ['Birth Place', selectedStudent.students?.birth_place || 'N/A'],
+                          ['Gender', selectedStudent.students?.gender || 'N/A'],
+                          ['Contact', selectedStudent.students?.contact_number || 'N/A'],
+                          ['Email', selectedStudent.students?.email || 'N/A'],
+                          ['PSA No.', selectedStudent.students?.psa_birth_cert_no || 'N/A'],
+                          ['Address', selectedAddress || 'N/A'],
+                          ['Health Notes', [selectedStudent.students?.medical_conditions, selectedStudent.students?.allergies].filter(Boolean).join(' / ') || 'N/A'],
+                        ].map(([label, value]) => (
+                          <div key={label} className="rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-2">
+                            <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Users className="w-4 h-4 text-teal-600" />
+                        <h4 className="font-semibold text-gray-900 dark:text-white">Family And Emergency Contacts</h4>
+                        {detailLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">Guardians</p>
+                          {recordDetails.guardians.length === 0 ? (
+                            <p className="text-sm text-gray-400">No guardian records</p>
+                          ) : recordDetails.guardians.map(guardian => (
+                            <div key={guardian.id} className="py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                                {guardian.first_name} {guardian.middle_name || ''} {guardian.last_name}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                                {guardian.relationship || 'Guardian'}{guardian.is_primary ? ' • Primary' : ''} • {guardian.contact_number || 'No contact'}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">Emergency Contacts</p>
+                          {recordDetails.emergencyContacts.length === 0 ? (
+                            <p className="text-sm text-gray-400">No emergency records</p>
+                          ) : recordDetails.emergencyContacts.map(contact => (
+                            <div key={contact.id} className="py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                                {contact.full_name}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                                {contact.relationship || 'Contact'}{contact.is_primary ? ' • Primary' : ''} • {contact.contact_number || 'No contact'}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+
+                    <section>
+                      <div className="flex items-center gap-2 mb-3">
+                        <History className="w-4 h-4 text-teal-600" />
+                        <h4 className="font-semibold text-gray-900 dark:text-white">Enrollment History</h4>
+                      </div>
+                      <div className="rounded-xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-800">
+                        {recordDetails.history.length === 0 ? (
+                          <p className="p-3 text-sm text-gray-400">No enrollment history</p>
+                        ) : recordDetails.history.map(item => (
+                          <button
+                            key={item.id}
+                            onClick={() => navigate(`/enrollment/${item.id}`)}
+                            className="w-full px-3 py-2.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center justify-between gap-3"
+                          >
+                            <div>
+                              <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                {item.school_years?.year_name || 'School year'} • {item.grade_levels?.name || 'Grade'} • {item.sections?.name || 'No section'}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400">{formatDate(item.enrollment_date)} • {item.enrollment_type || 'enrollment'}</p>
+                            </div>
+                            <span className="text-xs capitalize text-gray-500 dark:text-gray-400">{item.status}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+
+                  <div className="space-y-5">
+                    <section>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Shield className="w-4 h-4 text-teal-600" />
+                        <h4 className="font-semibold text-gray-900 dark:text-white">Registrar Controls</h4>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['pending', 'enrolled', 'dropped'].map(status => (
+                          <button
+                            key={status}
+                            onClick={() => handleStatusUpdate(status)}
+                            disabled={selectedStudent.status === status}
+                            className={`px-3 py-2 rounded-lg text-xs font-semibold capitalize transition-colors ${
+                              selectedStudent.status === status
+                                ? 'bg-teal-600 text-white cursor-default'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-teal-100 dark:hover:bg-teal-900/30'
+                            }`}
+                          >
+                            {status}
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section>
+                      <div className="flex items-center gap-2 mb-3">
+                        <FileCheck className="w-4 h-4 text-teal-600" />
+                        <h4 className="font-semibold text-gray-900 dark:text-white">Document Checklist</h4>
+                      </div>
+                      <div className="space-y-2">
+                        {DOCUMENT_TYPES.map(docType => {
+                          const doc = selectedDocuments.find(item => item.document_type === docType.id);
+                          const isSubmitted = !!doc?.is_submitted;
+                          const Icon = docType.icon;
+                          return (
+                            <div key={docType.id} className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 flex items-center gap-3">
+                              <div className={`p-2 rounded-lg ${isSubmitted ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'}`}>
+                                <Icon className="w-4 h-4" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-gray-900 dark:text-white">{docType.name}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">{isSubmitted ? `Submitted ${formatDate(doc.submitted_date)}` : 'Not submitted'}</p>
+                              </div>
+                              <button
+                                onClick={() => handleDocumentToggle(docType, !isSubmitted)}
+                                className={`w-11 h-6 rounded-full p-0.5 transition-colors ${isSubmitted ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-700'}`}
+                                title={isSubmitted ? 'Clear submission' : 'Mark submitted'}
+                              >
+                                <span className={`block w-5 h-5 rounded-full bg-white shadow transition-transform ${isSubmitted ? 'translate-x-5' : 'translate-x-0'}`} />
+                              </button>
+                              <button
+                                onClick={() => handlePrintDocument(docType)}
+                                className="p-2 rounded-lg text-gray-400 hover:text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-900/30 transition-colors"
+                                title={`Print ${docType.name}`}
+                              >
+                                <Printer className="w-4 h-4" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  </div>
+                </div>
+              </div>
+            </GlassCard>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Quick Navigation ── */}
       <motion.div {...fadeUp} transition={{ delay: 0.25 }}>
