@@ -30,6 +30,7 @@ import toast from 'react-hot-toast'
 const emptyLedger = { fees: [], payments: [], charges: [], feeTypes: [] }
 const defaultPaymentForm = { amount: '', payment_method: 'cash', remarks: '', fee_type_id: '' }
 const defaultAssessmentForm = { total_amount: '', discount_amount: '0' }
+const defaultBreakdownForm = { amount: '', due_date: '' }
 
 const formatCurrency = (amount) =>
   `₱${parseFloat(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
@@ -107,6 +108,8 @@ export default function CashierLedger() {
   const [paymentForm, setPaymentForm] = useState(defaultPaymentForm)
   const [showAssessmentModal, setShowAssessmentModal] = useState(false)
   const [assessmentForm, setAssessmentForm] = useState(defaultAssessmentForm)
+  const [breakdownModal, setBreakdownModal] = useState(null)
+  const [breakdownForm, setBreakdownForm] = useState(defaultBreakdownForm)
   const [processing, setProcessing] = useState(false)
   const [receiptModal, setReceiptModal] = useState(null)
 
@@ -339,6 +342,8 @@ export default function CashierLedger() {
   const feeBreakdownRows = useMemo(() => {
     const chargeRows = ledger.charges.map(charge => ({
       id: charge.id,
+      feeStructureId: charge.id,
+      editable: true,
       name: charge.fee_types?.name || 'Fee',
       dueDate: charge.due_date,
       amount: parseFloat(charge.amount) || 0,
@@ -349,6 +354,8 @@ export default function CashierLedger() {
     if (!chargeRows.length && ledgerView.totalFees > 0) {
       return [{
         id: 'ledger-assessment',
+        feeStructureId: null,
+        editable: false,
         name: 'Ledger assessment',
         dueDate: primaryFee?.created_at,
         amount: ledgerView.totalFees,
@@ -360,6 +367,8 @@ export default function CashierLedger() {
         ...chargeRows,
         {
           id: 'student-adjustment',
+          feeStructureId: null,
+          editable: false,
           name: adjustment > 0 ? 'Student adjustment' : 'Student credit adjustment',
           dueDate: primaryFee?.updated_at,
           amount: adjustment,
@@ -431,6 +440,116 @@ export default function CashierLedger() {
     } catch (err) {
       console.error(err)
       toast.error(err.message || 'Failed to update assessment')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const openBreakdownModal = (row) => {
+    if (!row?.editable || !row.feeStructureId) {
+      toast.error('Use Edit Assessment for student-specific adjustments')
+      return
+    }
+    setBreakdownModal(row)
+    setBreakdownForm({
+      amount: String(row.amount ?? ''),
+      due_date: row.dueDate || '',
+    })
+  }
+
+  const saveBreakdownItem = async (e) => {
+    e.preventDefault()
+    if (!breakdownModal?.feeStructureId || !selectedStudent?.enrollment?.grade_level_id || !selectedSY) return
+
+    const amount = parseFloat(breakdownForm.amount)
+    if (Number.isNaN(amount) || amount < 0) {
+      toast.error('Please enter a valid fee amount')
+      return
+    }
+
+    setProcessing(true)
+    try {
+      const gradeLevelId = selectedStudent.enrollment.grade_level_id
+      const [structuresRes, enrollmentsRes] = await Promise.all([
+        supabase
+          .from('fee_structures')
+          .select('id, amount')
+          .eq('school_year_id', selectedSY)
+          .eq('grade_level_id', gradeLevelId),
+        supabase
+          .from('enrollments')
+          .select('student_id')
+          .eq('school_year_id', selectedSY)
+          .eq('grade_level_id', gradeLevelId)
+          .eq('status', 'enrolled'),
+      ])
+      if (structuresRes.error) throw structuresRes.error
+      if (enrollmentsRes.error) throw enrollmentsRes.error
+
+      const feeStructures = structuresRes.data || []
+      if (!feeStructures.some(row => row.id === breakdownModal.feeStructureId)) {
+        throw new Error('This fee item no longer belongs to the selected grade and school year.')
+      }
+
+      const gradeTotal = feeStructures.reduce((sum, row) => {
+        const rowAmount = row.id === breakdownModal.feeStructureId ? amount : parseFloat(row.amount) || 0
+        return sum + rowAmount
+      }, 0)
+      const studentIds = (enrollmentsRes.data || []).map(row => row.student_id).filter(Boolean)
+
+      let affectedFees = []
+      if (studentIds.length) {
+        const { data, error: feesError } = await supabase
+          .from('student_fees')
+          .select('id, student_id, school_year_id, total_fees, total_discount, total_paid, balance, status, created_at, updated_at')
+          .eq('school_year_id', selectedSY)
+          .in('student_id', studentIds)
+        if (feesError) throw feesError
+        affectedFees = data || []
+
+        const blocked = affectedFees.find(row => gradeTotal - (parseFloat(row.total_discount) || 0) < (parseFloat(row.total_paid) || 0))
+        if (blocked) {
+          throw new Error('New grade total is lower than an amount already paid by a student.')
+        }
+      }
+
+      const { error: structureError } = await supabase
+        .from('fee_structures')
+        .update({
+          amount,
+          due_date: breakdownForm.due_date || null,
+        })
+        .eq('id', breakdownModal.feeStructureId)
+      if (structureError) throw structureError
+
+      if (affectedFees.length) {
+        await Promise.all(affectedFees.map(async row => {
+          const { data: updatedFee, error } = await updateStudentFeeFromInvoice(supabase, row, {
+            totalAmount: gradeTotal,
+            discountAmount: parseFloat(row.total_discount) || 0,
+          })
+          if (error) throw error
+
+          const { error: invoiceSyncError } = await syncInvoiceFromStudentFee(supabase, {
+            studentFee: updatedFee || { ...row, total_fees: gradeTotal },
+            studentId: row.student_id,
+            schoolYearId: selectedSY,
+            generatedBy: user?.id || null,
+          })
+          if (invoiceSyncError) throw invoiceSyncError
+        }))
+
+        toast.success(`Updated ${affectedFees.length} student ledger${affectedFees.length === 1 ? '' : 's'}`)
+      } else {
+        toast.success('Fee breakdown updated')
+      }
+
+      setBreakdownModal(null)
+      setBreakdownForm(defaultBreakdownForm)
+      await loadLedger(selectedStudent, selectedSY)
+    } catch (err) {
+      console.error(err)
+      toast.error(err.message || 'Failed to update fee breakdown')
     } finally {
       setProcessing(false)
     }
@@ -998,6 +1117,7 @@ export default function CashierLedger() {
     setSearch('')
     setShowPaymentModal(false)
     setShowAssessmentModal(false)
+    setBreakdownModal(null)
     setReceiptModal(null)
   }
 
@@ -1154,8 +1274,9 @@ export default function CashierLedger() {
                       onClick={openAssessmentModal}
                       disabled={!primaryFee}
                       className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                      title="Adjust this student's total assessment"
                     >
-                      <Pencil className="w-3.5 h-3.5" /> Edit
+                      <Pencil className="w-3.5 h-3.5" /> Adjust Total
                     </button>
                   </div>
                   {feeBreakdownRows.length === 0 ? (
@@ -1168,7 +1289,18 @@ export default function CashierLedger() {
                             <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{row.name}</p>
                             <p className="text-xs text-gray-400">Due {formatDate(row.dueDate)}</p>
                           </div>
-                          <p className={`text-sm font-bold ${row.amount < 0 ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{formatCurrency(row.amount)}</p>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <p className={`text-sm font-bold ${row.amount < 0 ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{formatCurrency(row.amount)}</p>
+                            {row.editable && (
+                              <button
+                                onClick={() => openBreakdownModal(row)}
+                                className="p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-500 transition-colors"
+                                title={`Edit ${row.name}`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ))}
                       <div className="flex items-center justify-between gap-3 pt-2">
@@ -1463,6 +1595,96 @@ export default function CashierLedger() {
                     <>
                       <CheckCircle2 className="w-5 h-5" />
                       Save Assessment
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {breakdownModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => !processing && setBreakdownModal(null)}
+          >
+            <motion.form
+              initial={{ scale: 0.94, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.94, y: 16 }}
+              onSubmit={saveBreakdownItem}
+              className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-lg w-full p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <Pencil className="w-5 h-5 text-blue-500" /> Edit Fee Item
+                </h3>
+                <button
+                  type="button"
+                  disabled={processing}
+                  onClick={() => setBreakdownModal(null)}
+                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{breakdownModal.name}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {selectedStudent?.enrollment?.grade_levels?.name || 'Grade'} · {selectedYear?.year_name || 'Selected SY'}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={breakdownForm.amount}
+                      onChange={e => setBreakdownForm(prev => ({ ...prev, amount: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-lg font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="0.00"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Due Date</label>
+                    <input
+                      type="date"
+                      value={breakdownForm.due_date}
+                      onChange={e => setBreakdownForm(prev => ({ ...prev, due_date: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    This fee item belongs to the grade-level fee structure. Saving it will update this fee for all enrolled students in the same grade and sync their invoices.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={processing}
+                  className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {processing ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-5 h-5" />
+                      Save Fee Item
                     </>
                   )}
                 </button>
