@@ -72,6 +72,12 @@ export async function updateStudentFeeFromInvoice(supabase, studentFee, { totalA
   const totalFees = numeric(totalAmount)
   const totalDiscount = numeric(discountAmount)
   const totalPaid = numeric(studentFee.total_paid)
+  if (totalFees - totalDiscount < totalPaid) {
+    return {
+      data: null,
+      error: { message: 'Net amount cannot be lower than the amount already paid.' },
+    }
+  }
   const projectedBalance = Math.max(totalFees - totalDiscount - totalPaid, 0)
   const status = projectedBalance <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid'
 

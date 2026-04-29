@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   CreditCard,
   FileText,
+  Pencil,
   Printer,
   Receipt,
   Search,
@@ -18,7 +19,7 @@ import {
   X,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { syncInvoiceFromStudentFee } from '../../lib/invoiceSync'
+import { syncInvoiceFromStudentFee, updateStudentFeeFromInvoice } from '../../lib/invoiceSync'
 import { getSavedCashierSchoolYearId, saveCashierSchoolYearId } from '../../lib/schoolYearSelection'
 import { useAuth } from '../../contexts/AuthContext'
 import GlassCard from '../../components/ui/GlassCard'
@@ -28,6 +29,7 @@ import toast from 'react-hot-toast'
 
 const emptyLedger = { fees: [], payments: [], charges: [], feeTypes: [] }
 const defaultPaymentForm = { amount: '', payment_method: 'cash', remarks: '', fee_type_id: '' }
+const defaultAssessmentForm = { total_amount: '', discount_amount: '0' }
 
 const formatCurrency = (amount) =>
   `₱${parseFloat(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
@@ -103,6 +105,8 @@ export default function CashierLedger() {
   const [ledger, setLedger] = useState(emptyLedger)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [paymentForm, setPaymentForm] = useState(defaultPaymentForm)
+  const [showAssessmentModal, setShowAssessmentModal] = useState(false)
+  const [assessmentForm, setAssessmentForm] = useState(defaultAssessmentForm)
   const [processing, setProcessing] = useState(false)
   const [receiptModal, setReceiptModal] = useState(null)
 
@@ -327,10 +331,110 @@ export default function CashierLedger() {
   }, [ledger, selectedStudent])
 
   const getFeeTypeName = (feeTypeId) => ledger.feeTypes.find(type => type.id === feeTypeId)?.name
+  const primaryFee = ledger.fees[0] || null
   const payableFee = useMemo(
     () => ledger.fees.find(row => parseFloat(row.balance || 0) > 0) || null,
     [ledger.fees]
   )
+  const feeBreakdownRows = useMemo(() => {
+    const chargeRows = ledger.charges.map(charge => ({
+      id: charge.id,
+      name: charge.fee_types?.name || 'Fee',
+      dueDate: charge.due_date,
+      amount: parseFloat(charge.amount) || 0,
+    }))
+    const chargeTotal = chargeRows.reduce((sum, row) => sum + row.amount, 0)
+    const adjustment = ledgerView.totalFees - chargeTotal
+
+    if (!chargeRows.length && ledgerView.totalFees > 0) {
+      return [{
+        id: 'ledger-assessment',
+        name: 'Ledger assessment',
+        dueDate: primaryFee?.created_at,
+        amount: ledgerView.totalFees,
+      }]
+    }
+
+    if (chargeRows.length && Math.abs(adjustment) >= 0.01) {
+      return [
+        ...chargeRows,
+        {
+          id: 'student-adjustment',
+          name: adjustment > 0 ? 'Student adjustment' : 'Student credit adjustment',
+          dueDate: primaryFee?.updated_at,
+          amount: adjustment,
+        },
+      ]
+    }
+
+    return chargeRows
+  }, [ledger.charges, ledgerView.totalFees, primaryFee])
+
+  const openAssessmentModal = () => {
+    if (!selectedStudent || !selectedSY || !primaryFee) {
+      toast.error('No ledger assessment found for this student')
+      return
+    }
+    setAssessmentForm({
+      total_amount: String(primaryFee.total_fees ?? ''),
+      discount_amount: String(primaryFee.total_discount ?? '0'),
+    })
+    setShowAssessmentModal(true)
+  }
+
+  const saveAssessment = async (e) => {
+    e.preventDefault()
+    if (!primaryFee || !selectedStudent || !selectedSY) return
+
+    const totalAmount = parseFloat(assessmentForm.total_amount)
+    const discountAmount = parseFloat(assessmentForm.discount_amount) || 0
+    const totalPaid = parseFloat(primaryFee.total_paid || 0)
+
+    if (!totalAmount || totalAmount <= 0) {
+      toast.error('Please enter a valid assessment amount')
+      return
+    }
+    if (discountAmount < 0 || discountAmount > totalAmount) {
+      toast.error('Discount must be between zero and the assessment amount')
+      return
+    }
+    if (totalAmount - discountAmount < totalPaid) {
+      toast.error('Net amount cannot be lower than amount already paid')
+      return
+    }
+
+    setProcessing(true)
+    try {
+      const { data: updatedStudentFee, error } = await updateStudentFeeFromInvoice(supabase, primaryFee, {
+        totalAmount,
+        discountAmount,
+      })
+      if (error) throw error
+
+      const { error: invoiceSyncError } = await syncInvoiceFromStudentFee(supabase, {
+        studentFee: updatedStudentFee || {
+          ...primaryFee,
+          total_fees: totalAmount,
+          total_discount: discountAmount,
+          balance: totalAmount - discountAmount - totalPaid,
+        },
+        studentId: selectedStudent.id,
+        schoolYearId: selectedSY,
+        generatedBy: user?.id || null,
+      })
+      if (invoiceSyncError) throw invoiceSyncError
+
+      toast.success('Assessment updated')
+      setShowAssessmentModal(false)
+      setAssessmentForm(defaultAssessmentForm)
+      await loadLedger(selectedStudent, selectedSY)
+    } catch (err) {
+      console.error(err)
+      toast.error(err.message || 'Failed to update assessment')
+    } finally {
+      setProcessing(false)
+    }
+  }
 
   const openPaymentModal = () => {
     if (!selectedStudent) {
@@ -489,15 +593,15 @@ export default function CashierLedger() {
     })
     const statusLabel = (ledgerView.status || 'unpaid').replace('_', ' ').toUpperCase()
 
-    const chargeRows = ledger.charges.length
-      ? ledger.charges.map(charge => `
+    const chargeRows = feeBreakdownRows.length
+      ? feeBreakdownRows.map(row => `
           <tr>
-            <td>${escapeHtml(charge.fee_types?.name || 'Fee')}</td>
-            <td>${escapeHtml(formatDate(charge.due_date))}</td>
-            <td class="amount">${escapeHtml(formatCurrency(charge.amount))}</td>
+            <td>${escapeHtml(row.name)}</td>
+            <td>${escapeHtml(formatDate(row.dueDate))}</td>
+            <td class="amount">${escapeHtml(formatCurrency(row.amount))}</td>
           </tr>
         `).join('')
-      : '<tr><td colspan="3" class="empty">No fee structure found for this grade level.</td></tr>'
+      : '<tr><td colspan="3" class="empty">No assessment found for this student.</td></tr>'
 
     const paymentRows = ledger.payments.length
       ? ledger.payments.map(payment => `
@@ -893,6 +997,7 @@ export default function CashierLedger() {
     setSelectedYear(nextYear || null)
     setSearch('')
     setShowPaymentModal(false)
+    setShowAssessmentModal(false)
     setReceiptModal(null)
   }
 
@@ -1041,22 +1146,35 @@ export default function CashierLedger() {
 
               <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
                 <GlassCard className="p-5" hover={false}>
-                  <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                    <Wallet className="w-4 h-4 text-blue-500" /> Fee Breakdown
-                  </h3>
-                  {ledger.charges.length === 0 ? (
-                    <p className="text-sm text-gray-400 py-6 text-center">No fee structure found for this grade level.</p>
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                      <Wallet className="w-4 h-4 text-blue-500" /> Fee Breakdown
+                    </h3>
+                    <button
+                      onClick={openAssessmentModal}
+                      disabled={!primaryFee}
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> Edit
+                    </button>
+                  </div>
+                  {feeBreakdownRows.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-6 text-center">No assessment found for this student.</p>
                   ) : (
                     <div className="space-y-2">
-                      {ledger.charges.map(charge => (
-                        <div key={charge.id} className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                      {feeBreakdownRows.map(row => (
+                        <div key={row.id} className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{charge.fee_types?.name || 'Fee'}</p>
-                            <p className="text-xs text-gray-400">Due {formatDate(charge.due_date)}</p>
+                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{row.name}</p>
+                            <p className="text-xs text-gray-400">Due {formatDate(row.dueDate)}</p>
                           </div>
-                          <p className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(charge.amount)}</p>
+                          <p className={`text-sm font-bold ${row.amount < 0 ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{formatCurrency(row.amount)}</p>
                         </div>
                       ))}
+                      <div className="flex items-center justify-between gap-3 pt-2">
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">Assessment Total</p>
+                        <p className="text-sm font-bold text-blue-600">{formatCurrency(ledgerView.totalFees)}</p>
+                      </div>
                     </div>
                   )}
                 </GlassCard>
@@ -1247,6 +1365,104 @@ export default function CashierLedger() {
                     <>
                       <CheckCircle2 className="w-5 h-5" />
                       Collect {paymentForm.amount ? formatCurrency(paymentForm.amount) : 'Payment'}
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showAssessmentModal && selectedStudent && primaryFee && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => !processing && setShowAssessmentModal(false)}
+          >
+            <motion.form
+              initial={{ scale: 0.94, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.94, y: 16 }}
+              onSubmit={saveAssessment}
+              className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-lg w-full p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <Pencil className="w-5 h-5 text-blue-500" /> Edit Assessment
+                </h3>
+                <button
+                  type="button"
+                  disabled={processing}
+                  onClick={() => setShowAssessmentModal(false)}
+                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{studentName(selectedStudent)}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">LRN {selectedStudent.lrn || '-'} · {selectedYear?.year_name || 'Selected SY'}</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Assessment Amount</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={assessmentForm.total_amount}
+                      onChange={e => setAssessmentForm(prev => ({ ...prev, total_amount: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-lg font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="0.00"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={assessmentForm.discount_amount}
+                      onChange={e => setAssessmentForm(prev => ({ ...prev, discount_amount: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-lg font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: 'Paid', value: formatCurrency(primaryFee.total_paid) },
+                    { label: 'Net', value: formatCurrency(Math.max((parseFloat(assessmentForm.total_amount) || 0) - (parseFloat(assessmentForm.discount_amount) || 0), 0)) },
+                    { label: 'Balance', value: formatCurrency(Math.max((parseFloat(assessmentForm.total_amount) || 0) - (parseFloat(assessmentForm.discount_amount) || 0) - (parseFloat(primaryFee.total_paid) || 0), 0)) },
+                  ].map(item => (
+                    <div key={item.label} className="rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 p-3">
+                      <p className="text-xs text-gray-400">{item.label}</p>
+                      <p className="text-sm font-bold text-gray-900 dark:text-white mt-1">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={processing}
+                  className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {processing ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-5 h-5" />
+                      Save Assessment
                     </>
                   )}
                 </button>
