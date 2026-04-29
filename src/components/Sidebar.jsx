@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, ChevronDown, ChevronRight, Sparkles, X, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { LogOut, Sparkles, X, PanelLeftClose, PanelLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getNavForRole } from '../config/roleNavConfig';
 
@@ -12,8 +12,12 @@ export default function Sidebar({ isOpen, setIsOpen }) {
   const navConfig = getNavForRole(role);
   const [collapsed, setCollapsed] = useState(false);
   const [expandedSections, setExpandedSections] = useState(
-    navConfig.sections.map((_, i) => i === 0)
+    navConfig.sections.map(() => true)
   );
+
+  useEffect(() => {
+    setExpandedSections(navConfig.sections.map(() => true));
+  }, [role, navConfig.sections.length]);
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -28,10 +32,6 @@ export default function Sidebar({ isOpen, setIsOpen }) {
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, []);
-
-  const toggleSection = (idx) => {
-    setExpandedSections(prev => prev.map((v, i) => i === idx ? !v : v));
-  };
 
   const handleLogout = async () => {
     try {
@@ -95,25 +95,17 @@ export default function Sidebar({ isOpen, setIsOpen }) {
         {navConfig.sections.map((section, sIdx) => (
           <div key={section.title} className="mb-2">
             {!collapsed && (
-              <button
-                onClick={() => toggleSection(sIdx)}
-                className="flex items-center justify-between w-full px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
+              <div className="flex items-center w-full px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
                 <span>{section.title}</span>
-                {expandedSections[sIdx] ? (
-                  <ChevronDown className="w-3 h-3" />
-                ) : (
-                  <ChevronRight className="w-3 h-3" />
-                )}
-              </button>
+              </div>
             )}
             
             <AnimatePresence>
               {(collapsed || expandedSections[sIdx]) && (
                 <motion.div
-                  initial={collapsed ? false : { height: 0, opacity: 0 }}
+                  initial={false}
                   animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
+                  exit={false}
                   transition={{ duration: 0.2 }}
                   className="overflow-hidden space-y-0.5"
                 >
