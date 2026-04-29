@@ -1,36 +1,97 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../contexts/AuthContext';
 import GlassCard from '../../components/ui/GlassCard';
 import { Skeleton, SkeletonCard, SkeletonTable, SkeletonDashboard } from '../../components/ui/SkeletonLoader';
 import EmptyState from '../../components/ui/EmptyState';
+import toast from 'react-hot-toast';
+
+const numeric = (value) => parseFloat(value || 0) || 0;
+const netAssessment = (fee) => Math.max(numeric(fee?.total_fees) - numeric(fee?.total_discount), 0);
+
+const getEnrollment = (map, row) =>
+  map[`${row?.student_id || ''}:${row?.school_year_id || ''}`] || map[row?.student_id] || null;
+
+const getGradeName = (map, row) => getEnrollment(map, row)?.grade_levels?.name || 'Unassigned Grade';
+
+const gradeSortValue = (name) => {
+  const value = String(name || '').toLowerCase();
+  if (value.includes('kindergarten') || value.includes('kinder')) return 0;
+  const match = value.match(/grade\s*(\d+)/);
+  if (match) return Number(match[1]);
+  return 999;
+};
+
+const compareGradeNames = (a, b) => {
+  const diff = gradeSortValue(a) - gradeSortValue(b);
+  if (diff !== 0) return diff;
+  return String(a || '').localeCompare(String(b || ''));
+};
+
+const paymentStatusLabel = (status) => status === 'paid' ? 'Fully Paid' : String(status || '—').replace(/\b\w/g, c => c.toUpperCase());
 
 const FinanceReports = () => {
-  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('year');
   const [studentFees, setStudentFees] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [payments, setPayments] = useState([]);
-  const [students, setStudents] = useState([]);
+  const [enrollmentMap, setEnrollmentMap] = useState({});
 
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [feesRes, expensesRes, paymentsRes, studentsRes] = await Promise.all([
-        supabase.from('student_fees').select('*, students(first_name, last_name, lrn, sections(name, grade_levels(id, name)))'),
+      const [feesRes, expensesRes, paymentsRes, enrollmentsRes, feeTypesRes] = await Promise.all([
+        supabase
+          .from('student_fees')
+          .select('id, student_id, school_year_id, total_fees, total_discount, total_paid, balance, status, created_at, students(first_name, last_name, lrn), school_years(year_name)'),
         supabase.from('expenses').select('*').eq('status', 'approved'),
-        supabase.from('payments').select('*, students(first_name, last_name, lrn, sections(name, grade_levels(id, name))), fee_types(name)').order('payment_date', { ascending: false }),
-        supabase.from('students').select('id, first_name, last_name, sections(name, grade_levels(id, name))'),
+        supabase
+          .from('payments')
+          .select('id, student_id, student_fee_id, amount, payment_method, payment_date, created_at, status, is_refunded, fee_type_id, students(first_name, last_name, lrn), student_fees(school_year_id, status, balance)')
+          .order('payment_date', { ascending: false })
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('enrollments')
+          .select('student_id, school_year_id, status, grade_levels(id, name, level_order), sections(id, name)'),
+        supabase
+          .from('fee_types')
+          .select('id, name'),
       ]);
+
+      if (feesRes.error) throw feesRes.error;
+      if (expensesRes.error) throw expensesRes.error;
+      if (paymentsRes.error) throw paymentsRes.error;
+      if (enrollmentsRes.error) throw enrollmentsRes.error;
+      if (feeTypesRes.error) throw feeTypesRes.error;
+
+      const enrollments = (enrollmentsRes.data || []).reduce((map, enrollment) => {
+        map[`${enrollment.student_id}:${enrollment.school_year_id}`] = enrollment;
+        if (!map[enrollment.student_id]) map[enrollment.student_id] = enrollment;
+        return map;
+      }, {});
+      const feeTypeById = (feeTypesRes.data || []).reduce((map, feeType) => {
+        map[feeType.id] = feeType;
+        return map;
+      }, {});
+
       setStudentFees(feesRes.data || []);
       setExpenses(expensesRes.data || []);
-      setPayments(paymentsRes.data || []);
-      setStudents(studentsRes.data || []);
-    } catch (err) { console.error(err); }
+      setPayments((paymentsRes.data || []).map(payment => ({
+        ...payment,
+        fee_types: feeTypeById[payment.fee_type_id] || null,
+      })));
+      setEnrollmentMap(enrollments);
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Failed to load financial reports');
+      setStudentFees([]);
+      setExpenses([]);
+      setPayments([]);
+      setEnrollmentMap({});
+    }
     finally { setLoading(false); }
   };
 
@@ -58,26 +119,27 @@ const FinanceReports = () => {
   const reportData = useMemo(() => {
     const filteredFees = studentFees.filter(f => getDateFilter(f.created_at));
     const filteredExpenses = expenses.filter(e => getDateFilter(e.expense_date));
-    const filteredPayments = payments.filter(p => getDateFilter(p.payment_date));
+    const filteredPayments = payments.filter(p => getDateFilter(p.payment_date || p.created_at));
+    const validPayments = filteredPayments.filter(p => !p.is_refunded && ['completed', 'paid'].includes(p.status || 'completed'));
 
-    const totalRevenue = filteredFees.reduce((a, f) => a + (parseFloat(f.total_paid) || 0), 0);
-    const totalExpenses = filteredExpenses.reduce((a, e) => a + (parseFloat(e.amount) || 0), 0);
+    const totalRevenue = validPayments.reduce((a, p) => a + numeric(p.amount), 0);
+    const totalExpenses = filteredExpenses.reduce((a, e) => a + numeric(e.amount), 0);
     const netIncome = totalRevenue - totalExpenses;
-    const totalBilled = filteredFees.reduce((a, f) => a + (parseFloat(f.amount) || parseFloat(f.total_amount) || 0), 0);
+    const totalBilled = filteredFees.reduce((a, f) => a + netAssessment(f), 0);
     const collectionRate = totalBilled > 0 ? ((totalRevenue / totalBilled) * 100) : 0;
 
     // Collection by grade level
     const gradeMap = {};
     filteredFees.forEach(f => {
-      const gradeName = f.students?.sections?.grade_levels?.name || 'Unknown';
+      const gradeName = getGradeName(enrollmentMap, f);
       if (!gradeMap[gradeName]) gradeMap[gradeName] = { collected: 0, total: 0 };
-      gradeMap[gradeName].collected += parseFloat(f.total_paid) || 0;
-      gradeMap[gradeName].total += parseFloat(f.amount) || parseFloat(f.total_amount) || 0;
+      gradeMap[gradeName].collected += numeric(f.total_paid);
+      gradeMap[gradeName].total += netAssessment(f);
     });
     const collectionByGrade = Object.entries(gradeMap).map(([name, data]) => ({
       name, collected: data.collected, total: data.total,
       pct: data.total > 0 ? (data.collected / data.total * 100) : 0,
-    })).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    })).sort((a, b) => compareGradeNames(a.name, b.name));
 
     // Expense breakdown by category
     const categoryMap = {};
@@ -91,23 +153,23 @@ const FinanceReports = () => {
     })).sort((a, b) => b.amount - a.amount);
 
     // Recent payments
-    const recentPayments = filteredPayments.slice(0, 10);
+    const recentPayments = validPayments.slice(0, 10);
 
     // Outstanding by grade level
     const outstandingMap = {};
     filteredFees.forEach(f => {
-      const gradeName = f.students?.sections?.grade_levels?.name || 'Unknown';
-      const balance = (parseFloat(f.amount) || parseFloat(f.total_amount) || 0) - (parseFloat(f.total_paid) || 0);
+      const gradeName = getGradeName(enrollmentMap, f);
+      const balance = numeric(f.balance);
       if (!outstandingMap[gradeName]) outstandingMap[gradeName] = 0;
       outstandingMap[gradeName] += Math.max(0, balance);
     });
     const maxOutstanding = Math.max(...Object.values(outstandingMap), 1);
     const outstandingByGrade = Object.entries(outstandingMap).map(([name, amount]) => ({
       name, amount, pct: (amount / maxOutstanding) * 100,
-    })).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    })).sort((a, b) => compareGradeNames(a.name, b.name));
 
     return { totalRevenue, totalExpenses, netIncome, collectionRate, collectionByGrade, expenseByCategory, recentPayments, outstandingByGrade };
-  }, [studentFees, expenses, payments, dateRange]);
+  }, [studentFees, expenses, payments, enrollmentMap, dateRange]);
 
   const formatCurrency = (amount) => `₱${parseFloat(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
@@ -155,7 +217,7 @@ const FinanceReports = () => {
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Total Revenue', value: formatCurrency(reportData.totalRevenue), icon: '💵', color: 'from-emerald-500 to-teal-400', sub: 'from student fees' },
+          { label: 'Total Revenue', value: formatCurrency(reportData.totalRevenue), icon: '💵', color: 'from-emerald-500 to-teal-400', sub: 'completed payments' },
           { label: 'Total Expenses', value: formatCurrency(reportData.totalExpenses), icon: '💸', color: 'from-red-500 to-rose-400', sub: 'approved expenses' },
           { label: 'Net Income', value: formatCurrency(reportData.netIncome), icon: '📈', color: reportData.netIncome >= 0 ? 'from-blue-500 to-cyan-400' : 'from-red-500 to-rose-400', sub: 'revenue - expenses' },
           { label: 'Collection Rate', value: `${reportData.collectionRate.toFixed(1)}%`, icon: '🎯', color: 'from-purple-500 to-violet-400', sub: 'of total billed' },
@@ -264,13 +326,13 @@ const FinanceReports = () => {
                         {payment.students?.first_name} {payment.students?.last_name}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {payment.fee_types?.name || '—'} • {payment.payment_date ? new Date(payment.payment_date).toLocaleDateString() : '—'}
+                        {payment.fee_types?.name || 'General Payment'} • {payment.payment_date ? new Date(payment.payment_date).toLocaleDateString() : '—'}
                       </p>
                     </div>
                     <div className="text-right ml-4">
                       <p className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(payment.amount)}</p>
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusStyles[payment.status] || ''}`}>
-                        {payment.status || '—'}
+                        {paymentStatusLabel(payment.status)}
                       </span>
                     </div>
                   </motion.div>
