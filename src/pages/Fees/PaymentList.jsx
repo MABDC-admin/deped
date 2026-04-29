@@ -1,54 +1,175 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Calendar } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { getSavedCashierSchoolYearId, saveCashierSchoolYearId } from '../../lib/schoolYearSelection';
 import GlassCard from '../../components/ui/GlassCard';
-import { Skeleton, SkeletonCard, SkeletonTable, SkeletonDashboard } from '../../components/ui/SkeletonLoader';
+import { SkeletonTable, SkeletonDashboard } from '../../components/ui/SkeletonLoader';
 import AnimatedTabs from '../../components/ui/AnimatedTabs';
 import EmptyState from '../../components/ui/EmptyState';
+import toast from 'react-hot-toast';
+
+const formatPaymentMethod = (value) =>
+  String(value || 'cash')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+
+const getReceiptNumber = (payment) =>
+  payment?.or_number || payment?.receipt_number || payment?.reference_number || '—';
+
+const getGradeSection = (payment) => {
+  const grade = payment?.enrollment?.grade_levels?.name;
+  const section = payment?.enrollment?.sections?.name;
+  return [grade, section].filter(Boolean).join(' - ') || '—';
+};
 
 const PaymentList = () => {
+  const location = useLocation();
   const [payments, setPayments] = useState([]);
   const [feeTypes, setFeeTypes] = useState([]);
+  const [schoolYears, setSchoolYears] = useState([]);
+  const [selectedSY, setSelectedSY] = useState('');
+  const [selectedYear, setSelectedYear] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('transactions');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedPayment, setSelectedPayment] = useState(null);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchSchoolYears(); }, [location.search]);
 
-  const fetchData = async () => {
+  useEffect(() => {
+    if (!selectedSY) return;
+    const nextYear = schoolYears.find(y => y.id === selectedSY) || null;
+    setSelectedYear(nextYear);
+    saveCashierSchoolYearId(selectedSY);
+    setSearch('');
+    fetchData(selectedSY);
+  }, [selectedSY]);
+
+  const fetchSchoolYears = async () => {
     setLoading(true);
     try {
-      const [paymentsRes, feeTypesRes] = await Promise.all([
-        supabase.from('payments').select('*, students(first_name, last_name, lrn, sections(name, grade_levels(name))), fee_types(name, category)').order('payment_date', { ascending: false }),
-        supabase.from('fee_types').select('*').order('name'),
+      const { data, error } = await supabase
+        .from('school_years')
+        .select('id, year_name, status, is_current, start_date')
+        .order('start_date', { ascending: false });
+      if (error) throw error;
+
+      const years = data || [];
+      const requestedYear = new URLSearchParams(location.search).get('school_year_id');
+      const savedYear = getSavedCashierSchoolYearId();
+      const nextYear = years.find(y => y.id === requestedYear)
+        || years.find(y => y.id === savedYear)
+        || years.find(y => y.is_current || y.status === 'active')
+        || years[0];
+
+      setSchoolYears(years);
+      setSelectedYear(nextYear || null);
+      if (nextYear) {
+        if (selectedSY === nextYear.id) await fetchData(nextYear.id);
+        else setSelectedSY(nextYear.id);
+      } else {
+        setPayments([]);
+        setFeeTypes([]);
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to load school years');
+      setLoading(false);
+    }
+  };
+
+  const fetchYearEnrollmentMap = async (schoolYearId) => {
+    const { data, error } = await supabase
+      .from('enrollments')
+      .select('student_id, grade_levels(name), sections(name)')
+      .eq('school_year_id', schoolYearId)
+      .eq('status', 'enrolled');
+
+    if (error) {
+      console.error(error);
+      return {};
+    }
+
+    return (data || []).reduce((map, enrollment) => {
+      map[enrollment.student_id] = enrollment;
+      return map;
+    }, {});
+  };
+
+  const fetchData = async (schoolYearId = selectedSY) => {
+    if (!schoolYearId) return;
+    setLoading(true);
+    try {
+      const [paymentsRes, feeTypesRes, enrollmentMap] = await Promise.all([
+        supabase
+          .from('payments')
+          .select('id, amount, payment_method, payment_date, created_at, status, receipt_number, or_number, reference_number, remarks, is_refunded, fee_type_id, student_id, students(id, first_name, last_name, lrn), student_fees!inner(id, school_year_id, school_years(year_name))')
+          .eq('student_fees.school_year_id', schoolYearId)
+          .order('payment_date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .limit(1000),
+        supabase.from('fee_types').select('id, name, school_year_id, is_active').order('name'),
+        fetchYearEnrollmentMap(schoolYearId),
       ]);
-      setPayments(paymentsRes.data || []);
+
+      if (paymentsRes.error) throw paymentsRes.error;
+      if (feeTypesRes.error) throw feeTypesRes.error;
+
+      const feeTypeById = (feeTypesRes.data || []).reduce((map, feeType) => {
+        map[feeType.id] = feeType;
+        return map;
+      }, {});
+
+      setPayments((paymentsRes.data || []).map(payment => ({
+        ...payment,
+        fee_type: feeTypeById[payment.fee_type_id] || null,
+        enrollment: enrollmentMap[payment.student_id] || null,
+      })));
       setFeeTypes(feeTypesRes.data || []);
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Failed to load payment records');
+      setPayments([]);
+      setFeeTypes([]);
+    }
     finally { setLoading(false); }
   };
 
   const stats = useMemo(() => {
-    const totalCollected = payments.filter(p => p.status === 'completed' || p.status === 'paid').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0);
-    const totalPending = payments.filter(p => p.status === 'pending').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0);
-    const totalOverdue = payments.filter(p => p.status === 'overdue').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0);
+    const validPayments = payments.filter(p => !p.is_refunded);
+    const totalCollected = validPayments.filter(p => p.status === 'completed' || p.status === 'paid').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0);
+    const totalPending = validPayments.filter(p => p.status === 'pending').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0);
+    const totalOverdue = validPayments.filter(p => p.status === 'overdue').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0);
     return {
       totalCollected, totalPending, totalOverdue,
       transactionCount: payments.length,
-      completedCount: payments.filter(p => p.status === 'completed' || p.status === 'paid').length,
+      completedCount: validPayments.filter(p => p.status === 'completed' || p.status === 'paid').length,
     };
   }, [payments]);
 
   const filtered = useMemo(() => {
     return payments.filter(p => {
+      const q = search.trim().toLowerCase();
       const name = `${p.students?.first_name || ''} ${p.students?.last_name || ''}`.toLowerCase();
-      const matchSearch = name.includes(search.toLowerCase()) || (p.receipt_number || '').toLowerCase().includes(search.toLowerCase());
+      const reverseName = `${p.students?.last_name || ''} ${p.students?.first_name || ''}`.toLowerCase();
+      const receipt = `${p.or_number || ''} ${p.receipt_number || ''}`.toLowerCase();
+      const lrn = (p.students?.lrn || '').toLowerCase();
+      const matchSearch = !q || name.includes(q) || reverseName.includes(q) || receipt.includes(q) || lrn.includes(q);
       const matchStatus = statusFilter === 'all' || p.status === statusFilter;
       return matchSearch && matchStatus;
     });
   }, [payments, search, statusFilter]);
+
+  const summaryFeeTypes = useMemo(() => {
+    return feeTypes.filter(ft =>
+      (ft.is_active !== false && (!ft.school_year_id || ft.school_year_id === selectedSY))
+      || payments.some(p => p.fee_type_id === ft.id)
+    );
+  }, [feeTypes, payments, selectedSY]);
 
   const statusStyles = {
     completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
@@ -59,6 +180,11 @@ const PaymentList = () => {
   };
 
   const formatCurrency = (amount) => `₱${parseFloat(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  const handleYearChange = (schoolYearId) => {
+    setSelectedSY(schoolYearId);
+    setSelectedPayment(null);
+    setStatusFilter('all');
+  };
 
   const tabs = [
     { id: 'transactions', label: 'Transactions', icon: '💰' },
@@ -69,6 +195,29 @@ const PaymentList = () => {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Payment Records</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            {selectedYear?.year_name || 'Selected school year'} transactions
+          </p>
+        </div>
+        <div className="relative w-full sm:w-64">
+          <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <select
+            value={selectedSY}
+            onChange={e => handleYearChange(e.target.value)}
+            className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/80 dark:bg-gray-800/80 text-sm font-medium text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {schoolYears.map(sy => (
+              <option key={sy.id} value={sy.id}>
+                {sy.year_name}{sy.is_current || sy.status === 'active' ? ' (Active)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       {/* Revenue Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
@@ -107,6 +256,7 @@ const PaymentList = () => {
               className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-gray-800/50 outline-none text-sm">
               <option value="all">All Status</option>
               <option value="completed">Completed</option>
+              <option value="paid">Paid</option>
               <option value="pending">Pending</option>
               <option value="overdue">Overdue</option>
             </select>
@@ -141,15 +291,15 @@ const PaymentList = () => {
                             <p className="text-sm font-medium text-gray-900 dark:text-white">{payment.students?.first_name} {payment.students?.last_name}</p>
                             <p className="text-xs text-gray-400 font-mono">{payment.students?.lrn || ''}</p>
                           </td>
-                          <td className="px-4 py-3 text-sm text-gray-500">{payment.students?.sections?.grade_levels?.name} - {payment.students?.sections?.name}</td>
-                          <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{payment.fee_types?.name || '—'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-500">{getGradeSection(payment)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{payment.fee_type?.name || 'General Payment'}</td>
                           <td className="px-4 py-3 text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(payment.amount)}</td>
                           <td className="px-4 py-3">
                             <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusStyles[payment.status] || ''}`}>
                               {payment.status || '—'}
                             </span>
                           </td>
-                          <td className="px-4 py-3 font-mono text-xs text-gray-500">{payment.receipt_number || '—'}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-500">{getReceiptNumber(payment)}</td>
                         </motion.tr>
                       ))}
                     </tbody>
@@ -167,10 +317,12 @@ const PaymentList = () => {
                 <span>📊</span> Fee Collection Summary
               </h3>
               <div className="space-y-4">
-                {feeTypes.map((ft, i) => {
+                {summaryFeeTypes.length === 0 ? (
+                  <EmptyState title="No fee summary" description="No fee types or transactions found for this school year." />
+                ) : summaryFeeTypes.map((ft, i) => {
                   const feePayments = payments.filter(p => p.fee_type_id === ft.id);
-                  const collected = feePayments.filter(p => p.status === 'completed' || p.status === 'paid').reduce((a, p) => a + parseFloat(p.amount || 0), 0);
-                  const pending = feePayments.filter(p => p.status === 'pending').reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+                  const collected = feePayments.filter(p => !p.is_refunded && (p.status === 'completed' || p.status === 'paid')).reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+                  const pending = feePayments.filter(p => !p.is_refunded && p.status === 'pending').reduce((a, p) => a + parseFloat(p.amount || 0), 0);
                   const total = collected + pending;
                   const pct = total > 0 ? (collected / total * 100) : 0;
                   return (
@@ -207,17 +359,19 @@ const PaymentList = () => {
               <div className="text-center mb-6">
                 <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-3xl text-white mb-3">🧾</div>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">Payment Receipt</h3>
-                <p className="text-sm text-gray-400 font-mono">{selectedPayment.receipt_number || 'No receipt #'}</p>
+                <p className="text-sm text-gray-400 font-mono">{getReceiptNumber(selectedPayment)}</p>
               </div>
               <div className="space-y-3">
                 {[
                   { label: 'Student', value: `${selectedPayment.students?.first_name} ${selectedPayment.students?.last_name}` },
                   { label: 'LRN', value: selectedPayment.students?.lrn },
-                  { label: 'Fee Type', value: selectedPayment.fee_types?.name },
+                  { label: 'Grade/Section', value: getGradeSection(selectedPayment) },
+                  { label: 'School Year', value: selectedPayment.student_fees?.school_years?.year_name || selectedYear?.year_name },
+                  { label: 'Fee Type', value: selectedPayment.fee_type?.name || 'General Payment' },
                   { label: 'Amount', value: formatCurrency(selectedPayment.amount) },
                   { label: 'Status', value: selectedPayment.status },
                   { label: 'Date', value: selectedPayment.payment_date ? new Date(selectedPayment.payment_date).toLocaleDateString() : '—' },
-                  { label: 'Method', value: selectedPayment.payment_method },
+                  { label: 'Method', value: formatPaymentMethod(selectedPayment.payment_method) },
                 ].filter(f => f.value).map(f => (
                   <div key={f.label} className="flex justify-between py-2 border-b border-gray-100 dark:border-gray-800">
                     <span className="text-sm text-gray-500">{f.label}</span>
