@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
   Banknote,
   Calendar,
+  ChevronDown,
+  ChevronUp,
   CheckCircle2,
   CreditCard,
   Pencil,
@@ -110,6 +112,7 @@ export default function LoanList() {
   const [editingLoan, setEditingLoan] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [paymentLoan, setPaymentLoan] = useState(null)
+  const [expandedLoanId, setExpandedLoanId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(defaultLoanForm)
   const [paymentForm, setPaymentForm] = useState(defaultPaymentForm)
@@ -323,6 +326,7 @@ export default function LoanList() {
 
       toast.success('Loan payment recorded')
       setPaymentLoan(null)
+      setExpandedLoanId(paymentLoan.id)
       await fetchData()
     } catch (err) {
       console.error(err)
@@ -431,7 +435,7 @@ export default function LoanList() {
             <table className="w-full">
               <thead className="bg-gray-50/80 dark:bg-gray-800/80">
                 <tr>
-                  {['Borrower', 'Purpose', 'Principal', 'Payable', 'Paid', 'Balance', 'Due', 'Status', 'Actions'].map(header => (
+                  {['Borrower', 'Purpose', 'Principal', 'Payable', 'Paid', 'Balance', 'Due', 'Status', 'History', 'Actions'].map(header => (
                     <th key={header} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{header}</th>
                   ))}
                 </tr>
@@ -440,42 +444,101 @@ export default function LoanList() {
                 {filtered.slice(0, 150).map((loan, i) => {
                   const status = displayStatus(loan)
                   const lastPayment = loan.loan_payments?.[0]
+                  const paymentCount = loan.loan_payments?.length || 0
+                  const isExpanded = expandedLoanId === loan.id
                   return (
-                    <motion.tr key={loan.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: Math.min(i * 0.015, 0.4) }}
-                      className="hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors">
-                      <td className="px-4 py-3">
-                        <p className="text-sm font-semibold text-gray-900 dark:text-white">{loan.borrower_name}</p>
-                        <p className="text-xs text-gray-400">{loan.lender_name || 'No lender'}{loan.school_years?.year_name ? ` · ${loan.school_years.year_name}` : ''}</p>
-                      </td>
-                      <td className="px-4 py-3">
-                        <p className="text-sm text-gray-700 dark:text-gray-300 max-w-xs truncate">{loan.purpose}</p>
-                        {lastPayment && <p className="text-xs text-gray-400">Last payment {formatDate(lastPayment.payment_date)}</p>}
-                      </td>
-                      <td className="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(loan.principal_amount)}</td>
-                      <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{formatCurrency(totalPayable(loan))}</td>
-                      <td className="px-4 py-3 text-sm text-emerald-600 font-semibold">{formatCurrency(loan.paid_amount)}</td>
-                      <td className="px-4 py-3 text-sm font-bold text-amber-600">{formatCurrency(outstandingBalance(loan))}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500">{formatDate(loan.due_date)}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusStyles[status] || statusStyles.active}`}>
-                          {titleCase(status)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button onClick={() => openPaymentModal(loan)} disabled={outstandingBalance(loan) <= 0.005}
-                            className="p-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed" title="Record payment">
-                            <Banknote className="w-4 h-4" />
+                    <Fragment key={loan.id}>
+                      <motion.tr initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: Math.min(i * 0.015, 0.4) }}
+                        className="hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors">
+                        <td className="px-4 py-3">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">{loan.borrower_name}</p>
+                          <p className="text-xs text-gray-400">{loan.lender_name || 'No lender'}{loan.school_years?.year_name ? ` · ${loan.school_years.year_name}` : ''}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="text-sm text-gray-700 dark:text-gray-300 max-w-xs truncate">{loan.purpose}</p>
+                          {lastPayment && <p className="text-xs text-gray-400">Last payment {formatDate(lastPayment.payment_date)}</p>}
+                        </td>
+                        <td className="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(loan.principal_amount)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{formatCurrency(totalPayable(loan))}</td>
+                        <td className="px-4 py-3 text-sm text-emerald-600 font-semibold">{formatCurrency(loan.paid_amount)}</td>
+                        <td className="px-4 py-3 text-sm font-bold text-amber-600">{formatCurrency(outstandingBalance(loan))}</td>
+                        <td className="px-4 py-3 text-sm text-gray-500">{formatDate(loan.due_date)}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusStyles[status] || statusStyles.active}`}>
+                            {titleCase(status)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => setExpandedLoanId(isExpanded ? null : loan.id)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                            title="Show payment history"
+                          >
+                            {paymentCount} payment{paymentCount === 1 ? '' : 's'}
+                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                           </button>
-                          <button onClick={() => openEditModal(loan)} className="p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-500" title="Edit">
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => setDeleteConfirm(loan)} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500" title="Delete">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </motion.tr>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openPaymentModal(loan)} disabled={outstandingBalance(loan) <= 0.005}
+                              className="p-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed" title="Record payment">
+                              <Banknote className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => openEditModal(loan)} className="p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-500" title="Edit">
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => setDeleteConfirm(loan)} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500" title="Delete">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </motion.tr>
+                      {isExpanded && (
+                        <tr key={`${loan.id}-payments`} className="bg-slate-50/80 dark:bg-gray-900/60">
+                          <td colSpan={10} className="px-4 py-4">
+                            <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
+                              <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-bold text-gray-900 dark:text-white">Payment History</p>
+                                  <p className="text-xs text-gray-500 dark:text-gray-400">{loan.borrower_name} · {loan.purpose}</p>
+                                </div>
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  Paid {formatCurrency(loan.paid_amount)} of {formatCurrency(totalPayable(loan))}
+                                </div>
+                              </div>
+                              {paymentCount === 0 ? (
+                                <div className="px-4 py-6 text-center text-sm text-gray-400">
+                                  No payments recorded for this borrower yet.
+                                </div>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full">
+                                    <thead className="bg-gray-50 dark:bg-gray-800">
+                                      <tr>
+                                        {['Date', 'Amount', 'Method', 'Reference', 'Remarks'].map(header => (
+                                          <th key={header} className="px-4 py-2.5 text-left text-[11px] font-bold uppercase text-gray-400">{header}</th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                      {loan.loan_payments.map(payment => (
+                                        <tr key={payment.id}>
+                                          <td className="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatDate(payment.payment_date)}</td>
+                                          <td className="px-4 py-2.5 text-sm font-semibold text-emerald-600">{formatCurrency(payment.amount)}</td>
+                                          <td className="px-4 py-2.5 text-sm text-gray-600 dark:text-gray-300">{titleCase(payment.payment_method)}</td>
+                                          <td className="px-4 py-2.5 text-sm text-gray-500">{payment.reference_number || '-'}</td>
+                                          <td className="px-4 py-2.5 text-sm text-gray-500">{payment.remarks || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   )
                 })}
               </tbody>
