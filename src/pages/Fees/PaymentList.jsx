@@ -94,7 +94,7 @@ const PaymentList = () => {
   const fetchYearEnrollmentMap = async (schoolYearId) => {
     const { data, error } = await supabase
       .from('enrollments')
-      .select('student_id, grade_levels(name), sections(name)')
+      .select('student_id, school_year_id, grade_levels(name), sections(name)')
       .eq('school_year_id', schoolYearId)
       .eq('status', 'enrolled');
 
@@ -116,11 +116,10 @@ const PaymentList = () => {
       const [paymentsRes, feeTypesRes, enrollmentMap] = await Promise.all([
         supabase
           .from('payments')
-          .select('id, amount, payment_method, payment_date, created_at, status, receipt_number, or_number, reference_number, remarks, is_refunded, fee_type_id, student_id, students(id, first_name, last_name, lrn), student_fees!inner(id, school_year_id, balance, status, school_years(year_name))')
-          .eq('student_fees.school_year_id', schoolYearId)
+          .select('id, amount, payment_method, payment_date, created_at, status, receipt_number, or_number, reference_number, remarks, is_refunded, fee_type_id, student_id, students(id, first_name, last_name, lrn), student_fees(id, school_year_id, balance, status, school_years(year_name))')
           .order('payment_date', { ascending: false })
           .order('created_at', { ascending: false })
-          .limit(1000),
+          .limit(3000),
         supabase.from('fee_types').select('id, name, school_year_id, is_active').order('name'),
         fetchYearEnrollmentMap(schoolYearId),
       ]);
@@ -133,7 +132,13 @@ const PaymentList = () => {
         return map;
       }, {});
 
-      setPayments((paymentsRes.data || []).map(payment => ({
+      const scopedPayments = (paymentsRes.data || []).filter(payment => {
+        const feeYearId = payment.student_fees?.school_year_id;
+        if (feeYearId) return feeYearId === schoolYearId;
+        return Boolean(enrollmentMap[payment.student_id]);
+      });
+
+      setPayments(scopedPayments.map(payment => ({
         ...payment,
         fee_type: feeTypeById[payment.fee_type_id] || null,
         enrollment: enrollmentMap[payment.student_id] || null,

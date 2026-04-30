@@ -122,6 +122,7 @@ export default function App() {
                 <Route path="grades/reports" element={<RoleGuard allowed={["teacher","registrar","principal"]}><GradeReport /></RoleGuard>} />
                 <Route path="attendance" element={<RoleGuard allowed={["teacher","registrar","principal","guidance"]}><AttendanceList /></RoleGuard>} />
                 <Route path="fees" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><FeeList /></RoleGuard>} />
+                <Route path="paymens" element={<Navigate to="/payments" replace />} />
                 <Route path="payments" element={<RoleGuard allowed={["super_admin","cashier","registrar","principal"]}><PaymentList /></RoleGuard>} />
                 <Route path="invoices" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><InvoiceList /></RoleGuard>} />
                 <Route path="receipts" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><ReceiptList /></RoleGuard>} />
