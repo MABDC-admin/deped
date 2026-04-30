@@ -43,13 +43,17 @@ const GradeManagement = () => {
     setLoading(true);
     try {
       const [gradesRes, studentsRes, sectionsRes, subjectsRes] = await Promise.all([
-        supabase.from('quarterly_grades').select('*, students(first_name, last_name, lrn, section_id), subjects(name, short_name)'),
-        supabase.from('students').select('id, first_name, last_name, lrn, section_id, sections(name, grade_levels(name))').eq('status', 'active'),
+        supabase.from('quarterly_grades').select('*, students(id, first_name, last_name, lrn), subjects(name, short_name), quarters(quarter_number), sections(id, name, grade_levels(name))'),
+        supabase.from('enrollments').select('student_id, section_id, students(id, first_name, last_name, lrn), sections(id, name, grade_levels(name))').eq('status', 'enrolled'),
         supabase.from('sections').select('id, name, grade_levels(name)').order('name'),
         supabase.from('subjects').select('id, name, code').order('name'),
       ]);
       setGrades(gradesRes.data || []);
-      setStudents(studentsRes.data || []);
+      setStudents((studentsRes.data || []).filter(e => e.students).map(e => ({
+        ...e.students,
+        section_id: e.section_id,
+        sections: e.sections,
+      })));
       setSections(sectionsRes.data || []);
       setSubjects(subjectsRes.data || []);
     } catch (err) {
@@ -61,9 +65,9 @@ const GradeManagement = () => {
 
   const filteredGrades = useMemo(() => {
     return grades.filter(g => {
-      const matchSection = selectedSection === 'all' || g.students?.section_id === selectedSection;
+      const matchSection = selectedSection === 'all' || g.section_id === selectedSection;
       const matchSubject = selectedSubject === 'all' || g.subject_id === selectedSubject;
-      const matchQuarter = selectedQuarter === 'all' || g.quarter === parseInt(selectedQuarter);
+      const matchQuarter = selectedQuarter === 'all' || g.quarters?.quarter_number === parseInt(selectedQuarter);
       const name = `${g.students?.first_name || ''} ${g.students?.last_name || ''}`.toLowerCase();
       const matchSearch = name.includes(search.toLowerCase()) || (g.students?.lrn || '').includes(search);
       return matchSection && matchSubject && matchQuarter && matchSearch;
@@ -188,7 +192,7 @@ const GradeManagement = () => {
                         // Gather all grades for this student+subject for prediction
                         const studentSubjectGrades = grades
                           .filter(g => g.student_id === grade.student_id && g.subject_id === grade.subject_id)
-                          .sort((a, b) => a.quarter - b.quarter)
+                          .sort((a, b) => (a.quarters?.quarter_number || 0) - (b.quarters?.quarter_number || 0))
                           .map(getGradeValue);
                         const prediction = predictFinalGrade(studentSubjectGrades);
 
@@ -211,7 +215,7 @@ const GradeManagement = () => {
                             </td>
                             <td className="px-4 py-3">
                               <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-sm font-bold">
-                                Q{grade.quarter}
+                                Q{grade.quarters?.quarter_number || '—'}
                               </span>
                             </td>
                             <td className="px-4 py-3">
@@ -303,7 +307,7 @@ const GradeManagement = () => {
                 </p>
                 <div className="space-y-3">
                   {students.slice(0, 10).map(student => {
-                    const studentGrades = grades.filter(g => g.student_id === student.id).sort((a, b) => a.quarter - b.quarter);
+                    const studentGrades = grades.filter(g => g.student_id === student.id).sort((a, b) => (a.quarters?.quarter_number || 0) - (b.quarters?.quarter_number || 0));
                     if (studentGrades.length === 0) return null;
                     const avgGrades = studentGrades.map(getGradeValue);
                     const prediction = predictFinalGrade(avgGrades);

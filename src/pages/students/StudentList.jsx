@@ -260,11 +260,31 @@ export default function StudentList() {
 
   const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
 
+  const generateLrn = async () => {
+    const selectedYear = schoolYears.find(y => y.id === filterSchoolYear)
+    const prefix = (selectedYear?.year_name?.match(/\d{4}/)?.[0]) || new Date().getFullYear().toString()
+
+    const { data, error } = await supabase
+      .from('students')
+      .select('lrn')
+      .like('lrn', `${prefix}-%`)
+      .order('lrn', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) throw error
+
+    const latestNumber = data?.lrn ? Number.parseInt(data.lrn.split('-').pop(), 10) : 0
+    const nextNumber = Number.isFinite(latestNumber) ? latestNumber + 1 : 1
+    return `${prefix}-${String(nextNumber).padStart(6, '0')}`
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
     try {
       const submitData = { ...formData }
+      if (!submitData.lrn?.trim()) submitData.lrn = await generateLrn()
       Object.keys(submitData).forEach(k => { if (submitData[k] === '') submitData[k] = null })
       if (editing) {
         const { error } = await supabase.from('students').update(submitData).eq('id', editing.id)
@@ -309,7 +329,7 @@ export default function StudentList() {
   }
 
   const formFields = [
-    { label: 'LRN', name: 'lrn', type: 'input', maxLength: 12 },
+    { label: 'LRN', name: 'lrn', type: 'input', maxLength: 12, placeholder: 'Auto-generated if blank' },
     { label: 'First Name', name: 'first_name', type: 'input', required: true },
     { label: 'Middle Name', name: 'middle_name', type: 'input' },
     { label: 'Last Name', name: 'last_name', type: 'input', required: true },

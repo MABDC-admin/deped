@@ -132,7 +132,7 @@ export default function App() {
                 <Route path="schedule" element={<RoleGuard allowed={["registrar","teacher","principal","guidance"]}><ClassSchedule /></RoleGuard>} />
                 <Route path="settings/school-info" element={<RoleGuard allowed={["super_admin"]}><SchoolInfo /></RoleGuard>} />
                 <Route path="settings/system" element={<RoleGuard allowed={["super_admin"]}><SystemSettings /></RoleGuard>} />
-                <Route path="audit-logs" element={<RoleGuard allowed={["super_admin"]}><AuditLog /></RoleGuard>} />
+                <Route path="audit-logs" element={<RoleGuard allowed={["super_admin","principal"]}><AuditLog /></RoleGuard>} />
                 <Route path="behavioral" element={<RoleGuard allowed={["super_admin","teacher","guidance","principal","registrar"]}><BehavioralList /></RoleGuard>} />
                 <Route path="counseling" element={<RoleGuard allowed={["super_admin","guidance","principal","registrar","teacher"]}><CounselingList /></RoleGuard>} />
                 <Route path="notifications" element={<RoleGuard allowed={["registrar","teacher","principal","guidance","cashier","parent","student"]}><NotificationList /></RoleGuard>} />

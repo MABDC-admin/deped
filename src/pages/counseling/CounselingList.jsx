@@ -17,6 +17,19 @@ const TYPE_ICONS = {
   academic: '📚', behavioral: '🔔', personal: '💭', family: '👨‍👩‍👧', career: '🎯', emotional: '💝', social: '👥',
 };
 
+const getCurrentEnrollment = (enrollments = []) => (
+  enrollments.find(e => e.status === 'enrolled') || enrollments[0] || null
+);
+
+const normalizeCounselingRecord = (record) => {
+  const enrollment = getCurrentEnrollment(record.students?.enrollments || []);
+
+  return {
+    ...record,
+    students: record.students ? { ...record.students, sections: enrollment?.sections || null } : null,
+  };
+};
+
 const CounselingList = () => {
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,8 +42,13 @@ const CounselingList = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { data } = await supabase.from('counseling_records').select('*, students(first_name, last_name, lrn, sections(name, grade_levels(name)))').order('created_at', { ascending: false });
-      setCases(data || []);
+      const { data, error } = await supabase
+        .from('counseling_records')
+        .select('*, students(id, first_name, last_name, lrn, enrollments(id, status, school_year_id, grade_levels(name), sections(name, grade_levels(name)))))')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setCases((data || []).map(normalizeCounselingRecord));
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   };
@@ -48,7 +66,7 @@ const CounselingList = () => {
     total: cases.length,
     active: cases.filter(c => c.status === 'active' || c.status === 'ongoing').length,
     resolved: cases.filter(c => c.status === 'resolved' || c.status === 'closed').length,
-    types: [...new Set(cases.map(c => c.type).filter(Boolean))].length,
+    types: [...new Set(cases.map(c => c.session_type).filter(Boolean))].length,
   }), [cases]);
 
   if (loading) return <div className="space-y-6"><SkeletonLoader type="dashboard" /><SkeletonLoader type="table" /></div>;
@@ -102,7 +120,7 @@ const CounselingList = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filtered.map((caseItem, i) => {
             const status = STATUS_CONFIG[caseItem.status] || STATUS_CONFIG.active;
-            const typeIcon = TYPE_ICONS[caseItem.type] || '📋';
+            const typeIcon = TYPE_ICONS[caseItem.session_type] || '📋';
             return (
               <motion.div key={caseItem.id} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.05, 0.5) }}
                 onClick={() => setSelectedCase(caseItem)} className="cursor-pointer">
@@ -120,9 +138,9 @@ const CounselingList = () => {
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${status.color}`}>{status.icon} {status.label}</span>
                   </div>
 
-                  {caseItem.type && (
+                  {caseItem.session_type && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 mb-2">
-                      {typeIcon} {caseItem.type}
+                      {typeIcon} {caseItem.session_type}
                     </span>
                   )}
 
@@ -132,9 +150,7 @@ const CounselingList = () => {
                     <span className="text-xs text-gray-400">
                       {caseItem.created_at ? new Date(caseItem.created_at).toLocaleDateString() : '—'}
                     </span>
-                    {caseItem.sessions_count > 0 && (
-                      <span className="text-xs text-blue-500">{caseItem.sessions_count} session(s)</span>
-                    )}
+                    {caseItem.follow_up_date && <span className="text-xs text-blue-500">Follow-up {new Date(caseItem.follow_up_date).toLocaleDateString()}</span>}
                   </div>
                 </GlassCard>
               </motion.div>
@@ -165,12 +181,14 @@ const CounselingList = () => {
 
               <div className="space-y-3">
                 {[
-                  { label: 'Type', value: selectedCase.type },
+                  { label: 'Session Type', value: selectedCase.session_type },
                   { label: 'Status', value: selectedCase.status },
                   { label: 'Concern', value: selectedCase.concern },
-                  { label: 'Recommendation', value: selectedCase.recommendation },
-                  { label: 'Notes', value: selectedCase.notes },
-                  { label: 'Date', value: selectedCase.created_at ? new Date(selectedCase.created_at).toLocaleDateString() : null },
+                  { label: 'Findings', value: selectedCase.findings },
+                  { label: 'Action Taken', value: selectedCase.action_taken },
+                  { label: 'Recommendations', value: selectedCase.recommendations },
+                  { label: 'Follow-up Notes', value: selectedCase.follow_up_notes },
+                  { label: 'Date', value: selectedCase.session_date ? new Date(selectedCase.session_date).toLocaleDateString() : null },
                 ].filter(f => f.value).map(f => (
                   <div key={f.label} className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50">
                     <p className="text-xs text-gray-400 mb-1">{f.label}</p>

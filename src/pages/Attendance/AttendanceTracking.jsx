@@ -30,19 +30,37 @@ const AttendanceTracking = () => {
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
   const [bulkStatus, setBulkStatus] = useState({});
   const [saving, setSaving] = useState(false);
+  const [activeSchoolYearId, setActiveSchoolYearId] = useState(null);
 
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      const { data: activeYear } = await supabase
+        .from('school_years')
+        .select('id')
+        .or('is_current.eq.true,status.eq.active')
+        .limit(1)
+        .maybeSingle();
+      const schoolYearId = activeYear?.id || null;
+
       const [recordsRes, studentsRes, sectionsRes] = await Promise.all([
-        supabase.from('attendance').select('*, students(first_name, last_name, lrn, section_id)').order('date', { ascending: false }),
-        supabase.from('students').select('id, first_name, last_name, lrn, section_id, sections(name, grade_levels(name))').eq('status', 'active').order('last_name'),
-        supabase.from('sections').select('id, name, grade_levels(name)').order('name'),
+        supabase.from('attendance_records').select('*, students(id, first_name, last_name, lrn), sections(id, name, grade_levels(name))').order('date', { ascending: false }),
+        schoolYearId
+          ? supabase.from('enrollments').select('student_id, section_id, students(id, first_name, last_name, lrn), sections(id, name, grade_levels(name))').eq('school_year_id', schoolYearId).eq('status', 'enrolled').order('students(last_name)')
+          : supabase.from('enrollments').select('student_id, section_id, students(id, first_name, last_name, lrn), sections(id, name, grade_levels(name))').eq('status', 'enrolled').order('students(last_name)'),
+        schoolYearId
+          ? supabase.from('sections').select('id, name, grade_levels(name)').eq('school_year_id', schoolYearId).order('name')
+          : supabase.from('sections').select('id, name, grade_levels(name)').order('name'),
       ]);
+      setActiveSchoolYearId(schoolYearId);
       setRecords(recordsRes.data || []);
-      setStudents(studentsRes.data || []);
+      setStudents((studentsRes.data || []).filter(e => e.students).map(e => ({
+        ...e.students,
+        section_id: e.section_id,
+        sections: e.sections,
+      })));
       setSections(sectionsRes.data || []);
     } catch (err) {
       console.error('Error:', err);
@@ -53,7 +71,7 @@ const AttendanceTracking = () => {
 
   // Stats
   const stats = useMemo(() => {
-    const filtered = selectedSection === 'all' ? records : records.filter(r => r.students?.section_id === selectedSection);
+    const filtered = selectedSection === 'all' ? records : records.filter(r => r.section_id === selectedSection);
     const total = filtered.length;
     const present = filtered.filter(r => r.status === 'present').length;
     const absent = filtered.filter(r => r.status === 'absent').length;
@@ -75,7 +93,7 @@ const AttendanceTracking = () => {
     for (let i = 0; i < startPad; i++) days.push(null);
     for (let d = 1; d <= lastDay.getDate(); d++) {
       const dateStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const dayRecords = records.filter(r => r.date === dateStr && (selectedSection === 'all' || r.students?.section_id === selectedSection));
+      const dayRecords = records.filter(r => r.date === dateStr && (selectedSection === 'all' || r.section_id === selectedSection));
       const present = dayRecords.filter(r => r.status === 'present').length;
       const total = dayRecords.length;
       days.push({ day: d, date: dateStr, total, present, rate: total > 0 ? (present / total * 100) : null });
@@ -94,7 +112,7 @@ const AttendanceTracking = () => {
 
   // AI anomalies
   const anomalies = useMemo(() => {
-    const filtered = selectedSection === 'all' ? records : records.filter(r => r.students?.section_id === selectedSection);
+    const filtered = selectedSection === 'all' ? records : records.filter(r => r.section_id === selectedSection);
     return detectAttendanceAnomalies(filtered);
   }, [records, selectedSection]);
 
@@ -109,12 +127,13 @@ const AttendanceTracking = () => {
     try {
       const entries = Object.entries(bulkStatus).map(([studentId, status]) => ({
         student_id: studentId,
+        section_id: students.find(s => s.id === studentId)?.section_id || null,
         date: bulkDate,
         status,
-        school_year_id: null,
+        school_year_id: activeSchoolYearId,
       }));
       if (entries.length > 0) {
-        const { error } = await supabase.from('attendance').upsert(entries, { onConflict: 'student_id,date' });
+        const { error } = await supabase.from('attendance_records').upsert(entries, { onConflict: 'student_id,date' });
         if (error) throw error;
         await fetchData();
         setBulkStatus({});
@@ -199,7 +218,7 @@ const AttendanceTracking = () => {
                         <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{new Date(record.date).toLocaleDateString()}</td>
                         <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">{record.students?.first_name} {record.students?.last_name}</td>
                         <td className="px-4 py-3 font-mono text-xs text-gray-500">{record.students?.lrn || '—'}</td>
-                        <td className="px-4 py-3 text-sm text-gray-500">—</td>
+                        <td className="px-4 py-3 text-sm text-gray-500">{record.sections?.grade_levels?.name} {record.sections?.name ? `- ${record.sections.name}` : ''}</td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_CONFIG[record.status]?.light || ''}`}>
                             {STATUS_CONFIG[record.status]?.icon} {STATUS_CONFIG[record.status]?.label || record.status}

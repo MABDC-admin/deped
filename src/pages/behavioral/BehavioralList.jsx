@@ -13,6 +13,23 @@ const SEVERITY = {
   critical: { label: 'Critical', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', icon: '🚨', ring: 'ring-red-400' },
 };
 
+const getCurrentEnrollment = (enrollments = []) => (
+  enrollments.find(e => e.status === 'enrolled') || enrollments[0] || null
+);
+
+const normalizeIncidentForStudent = (incident, link = null) => {
+  const student = link?.students || null;
+  const enrollment = getCurrentEnrollment(student?.enrollments || []);
+
+  return {
+    ...incident,
+    student_link_id: link?.id || null,
+    participant_role: link?.role || null,
+    participant_notes: link?.notes || null,
+    students: student ? { ...student, sections: enrollment?.sections || null } : null,
+  };
+};
+
 const BehavioralList = () => {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,8 +42,21 @@ const BehavioralList = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { data } = await supabase.from('behavioral_records').select('*, students(first_name, last_name, lrn, sections(name, grade_levels(name)))').order('incident_date', { ascending: false });
-      setRecords(data || []);
+      const { data, error } = await supabase
+        .from('behavioral_incidents')
+        .select('*, incident_students(id, role, notes, students(id, first_name, last_name, lrn, enrollments(id, status, school_year_id, grade_levels(name), sections(name, grade_levels(name))))))')
+        .order('incident_date', { ascending: false });
+
+      if (error) throw error;
+
+      const normalized = (data || []).flatMap(incident => {
+        const links = incident.incident_students || [];
+        return links.length
+          ? links.map(link => normalizeIncidentForStudent(incident, link))
+          : [normalizeIncidentForStudent(incident)];
+      });
+
+      setRecords(normalized);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   };
@@ -57,7 +87,7 @@ const BehavioralList = () => {
   const byStudent = useMemo(() => {
     const map = {};
     filtered.forEach(r => {
-      const sid = r.student_id;
+      const sid = r.students?.id || r.id;
       if (!map[sid]) map[sid] = { student: r.students, records: [] };
       map[sid].records.push(r);
     });
@@ -122,7 +152,7 @@ const BehavioralList = () => {
                     const sev = SEVERITY[record.severity] || SEVERITY.minor;
                     return (
                       <motion.div
-                        key={record.id}
+                        key={`${record.id}-${record.student_link_id || 'incident'}`}
                         initial={{ opacity: 0, x: -30 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: Math.min(i * 0.05, 0.5) }}
@@ -146,8 +176,8 @@ const BehavioralList = () => {
                               <span className="text-xs text-gray-400">{record.incident_date ? new Date(record.incident_date).toLocaleDateString() : '—'}</span>
                             </div>
                           </div>
-                          {record.offense_type && (
-                            <span className="inline-block px-2 py-0.5 rounded-md text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 mb-2">{record.offense_type}</span>
+                          {record.incident_type && (
+                            <span className="inline-block px-2 py-0.5 rounded-md text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 mb-2">{record.incident_type}</span>
                           )}
                           <p className="text-sm text-gray-600 dark:text-gray-300">{record.description || 'No description'}</p>
                           {record.action_taken && (
@@ -198,7 +228,7 @@ const BehavioralList = () => {
                           <div key={r.id} className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                             <span>{SEVERITY[r.severity]?.icon}</span>
                             <span className="text-xs text-gray-400">{r.incident_date ? new Date(r.incident_date).toLocaleDateString() : ''}</span>
-                            <span className="truncate">{r.description || r.offense_type || 'No description'}</span>
+                            <span className="truncate">{r.description || r.incident_type || 'No description'}</span>
                           </div>
                         ))}
                         {item.records.length > 3 && <p className="text-xs text-blue-500">+{item.records.length - 3} more records</p>}
