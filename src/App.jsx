@@ -7,46 +7,65 @@ import ProtectedRoute from './components/ProtectedRoute'
 import RoleGuard from './components/RoleGuard'
 import Layout from './components/Layout'
 
-const Login = lazy(() => import('./pages/Login'))
-const DashboardRouter = lazy(() => import('./components/DashboardRouter'))
-const StudentList = lazy(() => import('./pages/students/StudentList'))
-const StudentDetail = lazy(() => import('./pages/students/StudentDetail'))
-const EnrollmentList = lazy(() => import('./pages/enrollment/EnrollmentList'))
-const EnrollmentForm = lazy(() => import('./pages/enrollment/EnrollmentForm'))
-const EnrollmentDetail = lazy(() => import('./pages/enrollment/EnrollmentDetail'))
-const TeacherList = lazy(() => import('./pages/Teachers/TeacherList'))
-const SectionList = lazy(() => import('./pages/sections/SectionList'))
-const SubjectList = lazy(() => import('./pages/subjects/SubjectList'))
-const GradeLevelList = lazy(() => import('./pages/grade-levels/GradeLevelList'))
-const SchoolYearList = lazy(() => import('./pages/school-years/SchoolYearList'))
-const PromotionHistory = lazy(() => import('./pages/school-years/PromotionHistory'))
-const UserList = lazy(() => import('./pages/users/UserList'))
-const GradeEntry = lazy(() => import('./pages/Grades/GradeEntry'))
-const GradeReport = lazy(() => import('./pages/Grades/GradeReport'))
-const AttendanceList = lazy(() => import('./pages/Attendance/AttendanceList'))
-const FeeList = lazy(() => import('./pages/Fees/FeeList'))
-const PaymentList = lazy(() => import('./pages/Fees/PaymentList'))
-const InvoiceList = lazy(() => import('./pages/finance/InvoiceList'))
-const ReceiptList = lazy(() => import('./pages/finance/ReceiptList'))
-const ExpenseList = lazy(() => import('./pages/finance/ExpenseList'))
-const LoanList = lazy(() => import('./pages/finance/LoanList'))
-const FinanceReports = lazy(() => import('./pages/finance/FinanceReports'))
-const AnnouncementList = lazy(() => import('./pages/Announcements/AnnouncementList'))
-const ClassSchedule = lazy(() => import('./pages/schedule/ClassSchedule'))
-const SchoolInfo = lazy(() => import('./pages/Settings/SchoolInfo'))
-const SystemSettings = lazy(() => import('./pages/Settings/SystemSettings'))
-const AuditLog = lazy(() => import('./pages/audit/AuditLog'))
-const BehavioralList = lazy(() => import('./pages/behavioral/BehavioralList'))
-const CounselingList = lazy(() => import('./pages/counseling/CounselingList'))
-const NotificationList = lazy(() => import('./pages/notifications/NotificationList'))
-const TeacherClasses = lazy(() => import('./pages/portal/TeacherClasses'))
-const PrincipalOverview = lazy(() => import('./pages/portal/PrincipalOverview'))
-const GuidanceWellness = lazy(() => import('./pages/portal/GuidanceWellness'))
-const CashierProcess = lazy(() => import('./pages/portal/CashierProcess'))
-const CashierLedger = lazy(() => import('./pages/portal/CashierLedger'))
-const ParentChildren = lazy(() => import('./pages/portal/ParentChildren'))
-const StudentGrades = lazy(() => import('./pages/portal/StudentGrades'))
-const RegistrarRecords = lazy(() => import('./pages/portal/RegistrarRecords'))
+const lazyPage = (importer) => lazy(async () => {
+  try {
+    const module = await importer()
+    if (typeof window !== 'undefined') sessionStorage.removeItem('sms:chunk-reload')
+    return module
+  } catch (error) {
+    const message = String(error?.message || error || '')
+    const isChunkError = /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk|ChunkLoadError/i.test(message)
+
+    if (isChunkError && typeof window !== 'undefined' && !sessionStorage.getItem('sms:chunk-reload')) {
+      sessionStorage.setItem('sms:chunk-reload', '1')
+      window.location.reload()
+      return new Promise(() => {})
+    }
+
+    throw error
+  }
+})
+
+const Login = lazyPage(() => import('./pages/Login'))
+const DashboardRouter = lazyPage(() => import('./components/DashboardRouter'))
+const StudentList = lazyPage(() => import('./pages/students/StudentList'))
+const StudentDetail = lazyPage(() => import('./pages/students/StudentDetail'))
+const EnrollmentList = lazyPage(() => import('./pages/enrollment/EnrollmentList'))
+const EnrollmentForm = lazyPage(() => import('./pages/enrollment/EnrollmentForm'))
+const EnrollmentDetail = lazyPage(() => import('./pages/enrollment/EnrollmentDetail'))
+const TeacherList = lazyPage(() => import('./pages/Teachers/TeacherList'))
+const SectionList = lazyPage(() => import('./pages/sections/SectionList'))
+const SubjectList = lazyPage(() => import('./pages/subjects/SubjectList'))
+const GradeLevelList = lazyPage(() => import('./pages/grade-levels/GradeLevelList'))
+const SchoolYearList = lazyPage(() => import('./pages/school-years/SchoolYearList'))
+const PromotionHistory = lazyPage(() => import('./pages/school-years/PromotionHistory'))
+const UserList = lazyPage(() => import('./pages/users/UserList'))
+const GradeEntry = lazyPage(() => import('./pages/Grades/GradeEntry'))
+const GradeReport = lazyPage(() => import('./pages/Grades/GradeReport'))
+const AttendanceList = lazyPage(() => import('./pages/Attendance/AttendanceList'))
+const FeeList = lazyPage(() => import('./pages/Fees/FeeList'))
+const PaymentList = lazyPage(() => import('./pages/Fees/PaymentList'))
+const InvoiceList = lazyPage(() => import('./pages/finance/InvoiceList'))
+const ReceiptList = lazyPage(() => import('./pages/finance/ReceiptList'))
+const ExpenseList = lazyPage(() => import('./pages/finance/ExpenseList'))
+const LoanList = lazyPage(() => import('./pages/finance/LoanList'))
+const FinanceReports = lazyPage(() => import('./pages/finance/FinanceReports'))
+const AnnouncementList = lazyPage(() => import('./pages/Announcements/AnnouncementList'))
+const ClassSchedule = lazyPage(() => import('./pages/schedule/ClassSchedule'))
+const SchoolInfo = lazyPage(() => import('./pages/Settings/SchoolInfo'))
+const SystemSettings = lazyPage(() => import('./pages/Settings/SystemSettings'))
+const AuditLog = lazyPage(() => import('./pages/audit/AuditLog'))
+const BehavioralList = lazyPage(() => import('./pages/behavioral/BehavioralList'))
+const CounselingList = lazyPage(() => import('./pages/counseling/CounselingList'))
+const NotificationList = lazyPage(() => import('./pages/notifications/NotificationList'))
+const TeacherClasses = lazyPage(() => import('./pages/portal/TeacherClasses'))
+const PrincipalOverview = lazyPage(() => import('./pages/portal/PrincipalOverview'))
+const GuidanceWellness = lazyPage(() => import('./pages/portal/GuidanceWellness'))
+const CashierProcess = lazyPage(() => import('./pages/portal/CashierProcess'))
+const CashierLedger = lazyPage(() => import('./pages/portal/CashierLedger'))
+const ParentChildren = lazyPage(() => import('./pages/portal/ParentChildren'))
+const StudentGrades = lazyPage(() => import('./pages/portal/StudentGrades'))
+const RegistrarRecords = lazyPage(() => import('./pages/portal/RegistrarRecords'))
 
 const PageLoader = () => (
   <div className="min-h-[50vh] flex items-center justify-center">
@@ -103,7 +122,7 @@ export default function App() {
                 <Route path="grades/reports" element={<RoleGuard allowed={["teacher","registrar","principal"]}><GradeReport /></RoleGuard>} />
                 <Route path="attendance" element={<RoleGuard allowed={["teacher","registrar","principal","guidance"]}><AttendanceList /></RoleGuard>} />
                 <Route path="fees" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><FeeList /></RoleGuard>} />
-                <Route path="payments" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><PaymentList /></RoleGuard>} />
+                <Route path="payments" element={<RoleGuard allowed={["super_admin","cashier","registrar","principal"]}><PaymentList /></RoleGuard>} />
                 <Route path="invoices" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><InvoiceList /></RoleGuard>} />
                 <Route path="receipts" element={<RoleGuard allowed={["super_admin","cashier","registrar"]}><ReceiptList /></RoleGuard>} />
                 <Route path="expenses" element={<RoleGuard allowed={["super_admin","cashier"]}><ExpenseList /></RoleGuard>} />
