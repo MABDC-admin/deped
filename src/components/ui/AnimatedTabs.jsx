@@ -1,6 +1,21 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
 
+function TabIcon({ icon }) {
+  if (!icon) return null
+
+  if (typeof icon === 'string') {
+    return (
+      <span aria-hidden="true" className="text-sm leading-none">
+        {icon}
+      </span>
+    )
+  }
+
+  const Icon = icon
+  return <Icon className="w-4 h-4" />
+}
+
 export default function AnimatedTabs({ tabs, activeTab, onChange, className = '' }) {
   const [indicatorStyle, setIndicatorStyle] = useState({})
   const tabRefs = useRef([])
@@ -29,7 +44,7 @@ export default function AnimatedTabs({ tabs, activeTab, onChange, className = ''
                 ? 'text-primary-700 dark:text-primary-300' 
                 : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
           >
-            {tab.icon && <tab.icon className="w-4 h-4" />}
+            <TabIcon icon={tab.icon} />
             {tab.label}
             {tab.count !== undefined && (
               <span className={`ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full
