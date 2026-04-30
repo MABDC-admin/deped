@@ -763,82 +763,76 @@ export default function RegistrarRecords() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  <AnimatePresence mode="popLayout">
-                    {paginatedRecords.map((record, idx) => {
-                      const firstName = record.students?.first_name || '';
-                      const lastName = record.students?.last_name || '';
-                      const fullName = `${lastName}, ${firstName}`;
-                      const statusCfg = STATUS_CONFIG[record.status] || STATUS_CONFIG.pending;
-                      const isSelected = selectedStudent?.id === record.id;
+                  {paginatedRecords.map((record) => {
+                    const firstName = record.students?.first_name || '';
+                    const lastName = record.students?.last_name || '';
+                    const fullName = `${lastName}, ${firstName}`;
+                    const statusCfg = STATUS_CONFIG[record.status] || STATUS_CONFIG.pending;
+                    const isSelected = selectedStudent?.id === record.id;
 
-                      return (
-                        <motion.tr
-                          key={record.id}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          transition={{ delay: idx * 0.02 }}
-                          onClick={() => handleRecordSelect(record)}
-                          className={`group cursor-pointer transition-colors duration-150 ${
-                            isSelected
-                              ? 'bg-teal-50 dark:bg-teal-900/20 border-l-4 border-l-teal-500'
-                              : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 border-l-4 border-l-transparent'
-                          }`}
-                        >
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${getInitialColor(fullName)} flex items-center justify-center text-white text-xs font-bold shadow-sm flex-shrink-0`}>
-                                {getInitials(firstName, lastName)}
-                              </div>
-                              <div>
-                                <p className="font-medium text-gray-900 dark:text-white leading-tight">{fullName}</p>
-                                <p className="text-[11px] text-gray-400">{record.students?.gender || ''}</p>
-                              </div>
+                    return (
+                      <tr
+                        key={record.id}
+                        onClick={() => handleRecordSelect(record)}
+                        className={`group cursor-pointer transition-colors duration-150 ${
+                          isSelected
+                            ? 'bg-teal-50 dark:bg-teal-900/20 border-l-4 border-l-teal-500'
+                            : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 border-l-4 border-l-transparent'
+                        }`}
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${getInitialColor(fullName)} flex items-center justify-center text-white text-xs font-bold shadow-sm flex-shrink-0`}>
+                              {getInitials(firstName, lastName)}
                             </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="font-mono text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-                              {record.students?.lrn || '—'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{record.grade_levels?.name || '—'}</td>
-                          <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{record.sections?.name || <span className="text-amber-500 text-xs font-medium">Unassigned</span>}</td>
-                          <td className="px-4 py-3">
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${statusCfg.bg} ${statusCfg.text}`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dot}`} />
-                              {record.status?.charAt(0).toUpperCase() + record.status?.slice(1)}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">
-                              {record.enrollment_type?.replace('_', ' ') || '—'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
-                            {record.enrollment_date ? new Date(record.enrollment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); navigate(`/students/${record.student_id}`); }}
-                                className="p-1.5 rounded-lg hover:bg-teal-100 dark:hover:bg-teal-900/30 text-gray-400 hover:text-teal-600 transition-colors"
-                                title="View Profile"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); navigate(`/enrollment/${record.id}/edit`); }}
-                                className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-gray-400 hover:text-blue-600 transition-colors"
-                                title="Edit Enrollment"
-                              >
-                                <Edit3 className="w-4 h-4" />
-                              </button>
+                            <div>
+                              <p className="font-medium text-gray-900 dark:text-white leading-tight">{fullName}</p>
+                              <p className="text-[11px] text-gray-400">{record.students?.gender || ''}</p>
                             </div>
-                          </td>
-                        </motion.tr>
-                      );
-                    })}
-                  </AnimatePresence>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="font-mono text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                            {record.students?.lrn || '—'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{record.grade_levels?.name || '—'}</td>
+                        <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{record.sections?.name || <span className="text-amber-500 text-xs font-medium">Unassigned</span>}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${statusCfg.bg} ${statusCfg.text}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dot}`} />
+                            {record.status?.charAt(0).toUpperCase() + record.status?.slice(1)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                            {record.enrollment_type?.replace('_', ' ') || '—'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+                          {record.enrollment_date ? new Date(record.enrollment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigate(`/students/${record.student_id}`); }}
+                              className="p-1.5 rounded-lg hover:bg-teal-100 dark:hover:bg-teal-900/30 text-gray-400 hover:text-teal-600 transition-colors"
+                              title="View Profile"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigate(`/enrollment/${record.id}/edit`); }}
+                              className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-gray-400 hover:text-blue-600 transition-colors"
+                              title="Edit Enrollment"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {paginatedRecords.length === 0 && (
                     <tr>
                       <td colSpan={8} className="px-4 py-12 text-center">

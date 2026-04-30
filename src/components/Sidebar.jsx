@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
 import { LogOut, Sparkles, X, PanelLeftClose, PanelLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getNavForRole } from '../config/roleNavConfig';
@@ -11,13 +10,6 @@ export default function Sidebar({ isOpen, setIsOpen }) {
   const location = useLocation();
   const navConfig = getNavForRole(role);
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedSections, setExpandedSections] = useState(
-    navConfig.sections.map(() => true)
-  );
-
-  useEffect(() => {
-    setExpandedSections(navConfig.sections.map(() => true));
-  }, [role, navConfig.sections.length]);
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -55,12 +47,12 @@ export default function Sidebar({ isOpen, setIsOpen }) {
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             {!collapsed && (
-              <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}>
+              <div>
                 <p className="font-bold text-sm text-gray-800 dark:text-white">DepEd SMS</p>
                 <p className={`text-xs font-medium bg-gradient-to-r ${navConfig.color} bg-clip-text text-transparent`}>
                   {navConfig.label}
                 </p>
-              </motion.div>
+              </div>
             )}
           </div>
           {/* Close button — mobile only */}
@@ -93,7 +85,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-1">
-        {navConfig.sections.map((section, sIdx) => (
+        {navConfig.sections.map((section) => (
           <div key={section.title} className="mb-2">
             {!collapsed && (
               <div className="flex items-center w-full px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
@@ -101,43 +93,33 @@ export default function Sidebar({ isOpen, setIsOpen }) {
               </div>
             )}
             
-            <AnimatePresence>
-              {(collapsed || expandedSections[sIdx]) && (
-                <motion.div
-                  initial={false}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={false}
-                  transition={{ duration: 0.2 }}
-                  className="overflow-hidden space-y-0.5"
-                >
-                  {section.items.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <NavLink
-                        key={item.path}
-                        to={item.path}
-                        end={item.path === '/'}
-                        className={({ isActive }) => `
-                          group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium
-                          transition-all duration-200 relative
-                          ${isActive 
-                            ? `bg-gradient-to-r ${navConfig.color} text-white shadow-lg shadow-blue-500/20` 
-                            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-white'
-                          }
-                          ${collapsed ? 'justify-center' : ''}
-                        `}
-                        title={collapsed ? item.label : undefined}
-                      >
-                        <Icon className="w-5 h-5 flex-shrink-0" />
-                        {!collapsed && (
-                          <span className="truncate">{item.label}</span>
-                        )}
-                      </NavLink>
-                    );
-                  })}
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <div className="overflow-hidden space-y-0.5">
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.path === '/'}
+                    className={({ isActive }) => `
+                      group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium
+                      transition-all duration-150 relative
+                      ${isActive
+                        ? `bg-gradient-to-r ${navConfig.color} text-white shadow-lg shadow-blue-500/20`
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-white'
+                      }
+                      ${collapsed ? 'justify-center' : ''}
+                    `}
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <Icon className="w-5 h-5 flex-shrink-0" />
+                    {!collapsed && (
+                      <span className="truncate">{item.label}</span>
+                    )}
+                  </NavLink>
+                );
+              })}
+            </div>
           </div>
         ))}
       </nav>
@@ -177,17 +159,12 @@ export default function Sidebar({ isOpen, setIsOpen }) {
   return (
     <>
       {/* Mobile backdrop overlay */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setIsOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
 
       {/* Mobile sidebar — slide-in drawer */}
       <aside
