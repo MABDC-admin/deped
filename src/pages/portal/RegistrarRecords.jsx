@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -8,12 +8,26 @@ import {
   ArrowUpRight, ArrowRight, Eye, Edit3, Trash2, MoreHorizontal,
   TrendingUp, BarChart3, RefreshCw, X, Check, AlertTriangle,
   FileCheck, FilePlus, FileSearch, Folder, FolderOpen, Archive,
-  Mail, Phone, MapPin, Hash, User, ChevronLeft, Heart, Activity, History
+  Mail, Phone, MapPin, Hash, User, ChevronLeft, Heart, Activity, History,
+  Upload, UploadCloud, Paperclip
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { GlassCard, AnimatedCounter, AnimatedBadge } from '../../components/ui';
+import {
+  LEARNER_DOCUMENT_BUCKET,
+  DOCUMENT_FILE_EXTENSIONS,
+  DOCUMENT_UPLOAD_ACCEPT,
+  buildLearnerDocumentPath,
+  canonicalDocumentTypeId,
+  countSubmittedLearnerDocuments,
+  formatFileSize,
+  getDocumentContentType,
+  getDocumentRecord,
+  getDocumentStoragePath,
+  inferDocumentTypeFromFileName,
+} from '../../lib/learnerDocuments';
 import toast from 'react-hot-toast';
 
 const fadeUp = {
@@ -38,6 +52,10 @@ const DOCUMENT_TYPES = [
   { id: 'transfer', name: 'Transfer Credentials', desc: 'For school transfers', icon: ArrowRight, color: 'orange' },
   { id: 'diploma', name: 'Diploma', desc: 'Completion certificate', icon: GraduationCap, color: 'pink' },
 ];
+
+const MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024;
+const DOCUMENT_ACCEPT = `${DOCUMENT_UPLOAD_ACCEPT},${DOCUMENT_FILE_EXTENSIONS}`;
+const ALLOWED_DOCUMENT_MIME_TYPES = DOCUMENT_UPLOAD_ACCEPT.split(',');
 
 export default function RegistrarRecords() {
   const navigate = useNavigate();
@@ -64,6 +82,8 @@ export default function RegistrarRecords() {
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [recordDetails, setRecordDetails] = useState({ guardians: [], emergencyContacts: [], history: [] });
   const [detailLoading, setDetailLoading] = useState(false);
+  const [uploadingDocKey, setUploadingDocKey] = useState('');
+  const bulkUploadInputRef = useRef(null);
   const itemsPerPage = 15;
 
   // Stats
@@ -144,7 +164,10 @@ export default function RegistrarRecords() {
       const withoutSection = enrollments.filter(e => !e.section_id).length;
       const maleCount = enrollments.filter(e => e.students?.gender === 'Male').length;
       const femaleCount = enrollments.filter(e => e.students?.gender === 'Female').length;
-      const documentSubmitted = (documentRows || []).filter(d => d.is_submitted).length;
+      const documentSubmitted = enrollments.reduce(
+        (total, enrollment) => total + countSubmittedLearnerDocuments(nextDocumentsByEnrollment[enrollment.id] || [], DOCUMENT_TYPES),
+        0
+      );
       const documentExpected = enrollments.length * DOCUMENT_TYPES.length;
 
       setStats({
@@ -290,7 +313,7 @@ export default function RegistrarRecords() {
   useEffect(() => { fetchRecordDetails(selectedStudent); }, [selectedStudent, fetchRecordDetails]);
 
   const selectedDocuments = selectedStudent ? documentsByEnrollment[selectedStudent.id] || [] : [];
-  const selectedSubmittedCount = selectedDocuments.filter(doc => doc.is_submitted).length;
+  const selectedSubmittedCount = countSubmittedLearnerDocuments(selectedDocuments, DOCUMENT_TYPES);
   const selectedAddress = selectedStudent?.students
     ? [
         selectedStudent.students.house_no,
@@ -323,11 +346,11 @@ export default function RegistrarRecords() {
   const handleDocumentToggle = async (docType, isSubmitted) => {
     if (!selectedStudent) return;
 
-    const existing = selectedDocuments.find(doc => doc.document_type === docType.id);
+    const existing = getDocumentRecord(selectedDocuments, docType);
     const payload = {
       enrollment_id: selectedStudent.id,
       student_id: selectedStudent.student_id,
-      document_type: docType.id,
+      document_type: canonicalDocumentTypeId(docType.id),
       document_name: docType.name,
       is_submitted: isSubmitted,
       submitted_date: isSubmitted ? new Date().toISOString().split('T')[0] : null,
@@ -369,6 +392,168 @@ export default function RegistrarRecords() {
     } catch (err) {
       console.error('Error updating document:', err);
       toast.error('Document status was not saved');
+    }
+  };
+
+  const mergeDocumentRecord = (enrollmentId, record, existingId) => {
+    setDocumentsByEnrollment(prev => {
+      const currentDocs = prev[enrollmentId] || [];
+      const hasRecord = currentDocs.some(doc => doc.id === (existingId || record.id));
+      const nextDocs = hasRecord
+        ? currentDocs.map(doc => doc.id === (existingId || record.id) ? record : doc)
+        : [...currentDocs, record];
+
+      return { ...prev, [enrollmentId]: nextDocs };
+    });
+  };
+
+  const uploadLearnerDocument = async (docType, file, documentsSnapshot = selectedDocuments) => {
+    if (!selectedStudent) throw new Error('Select a student first');
+    if (!file) throw new Error('Choose a file to upload');
+    if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) throw new Error('Document must be 10 MB or smaller');
+
+    const contentType = getDocumentContentType(file);
+    if (!ALLOWED_DOCUMENT_MIME_TYPES.includes(contentType)) {
+      throw new Error('Only PDF, JPG, PNG, WEBP, DOC, and DOCX files are allowed');
+    }
+
+    const canonicalType = canonicalDocumentTypeId(docType.id);
+    const existing = getDocumentRecord(documentsSnapshot, docType);
+    const filePath = buildLearnerDocumentPath({
+      studentId: selectedStudent.student_id,
+      enrollmentId: selectedStudent.id,
+      documentType: canonicalType,
+      fileName: file.name,
+    });
+
+    const { error: uploadError } = await supabase.storage
+      .from(LEARNER_DOCUMENT_BUCKET)
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        contentType,
+        upsert: false,
+      });
+
+    if (uploadError) throw uploadError;
+
+    const now = new Date().toISOString();
+    const payload = {
+      enrollment_id: selectedStudent.id,
+      student_id: selectedStudent.student_id,
+      document_type: canonicalType,
+      document_name: docType.name,
+      storage_bucket: LEARNER_DOCUMENT_BUCKET,
+      file_path: filePath,
+      file_url: filePath,
+      file_name: file.name,
+      file_size: file.size,
+      mime_type: contentType,
+      is_submitted: true,
+      submitted_date: now.split('T')[0],
+      verified_by: user?.id || null,
+      verified_at: now,
+      uploaded_by: user?.id || null,
+      uploaded_at: now,
+    };
+
+    const { data, error } = existing
+      ? await supabase
+          .from('enrollment_documents')
+          .update(payload)
+          .eq('id', existing.id)
+          .select()
+          .single()
+      : await supabase
+          .from('enrollment_documents')
+          .insert(payload)
+          .select()
+          .single();
+
+    if (error) throw error;
+    return { data, existing };
+  };
+
+  const handleSingleDocumentUpload = async (docType, file) => {
+    if (!file) return;
+
+    const uploadKey = canonicalDocumentTypeId(docType.id);
+    setUploadingDocKey(uploadKey);
+
+    try {
+      const { data, existing } = await uploadLearnerDocument(docType, file);
+      mergeDocumentRecord(selectedStudent.id, data, existing?.id);
+      setStats(prev => ({
+        ...prev,
+        documentSubmitted: prev.documentSubmitted + (!existing?.is_submitted ? 1 : 0),
+      }));
+      toast.success(`${docType.name} uploaded`);
+    } catch (err) {
+      console.error('Error uploading learner document:', err);
+      toast.error(err.message || 'Document upload failed');
+    } finally {
+      setUploadingDocKey('');
+    }
+  };
+
+  const handleBulkDocumentUpload = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!selectedStudent || files.length === 0) return;
+
+    setUploadingDocKey('bulk');
+    let uploaded = 0;
+    let skipped = 0;
+    let newlySubmitted = 0;
+    let currentDocs = [...selectedDocuments];
+
+    try {
+      for (const file of files) {
+        const docType = inferDocumentTypeFromFileName(file.name, DOCUMENT_TYPES);
+        if (!docType) {
+          skipped += 1;
+          continue;
+        }
+
+        const { data, existing } = await uploadLearnerDocument(docType, file, currentDocs);
+        currentDocs = existing
+          ? currentDocs.map(doc => doc.id === existing.id ? data : doc)
+          : [...currentDocs, data];
+        uploaded += 1;
+        if (!existing?.is_submitted) newlySubmitted += 1;
+      }
+
+      setDocumentsByEnrollment(prev => ({ ...prev, [selectedStudent.id]: currentDocs }));
+      if (newlySubmitted) {
+        setStats(prev => ({ ...prev, documentSubmitted: prev.documentSubmitted + newlySubmitted }));
+      }
+
+      if (uploaded > 0) toast.success(`Uploaded ${uploaded} document${uploaded === 1 ? '' : 's'}`);
+      if (skipped > 0) toast.error(`${skipped} file${skipped === 1 ? '' : 's'} skipped: filename did not match a document type`);
+    } catch (err) {
+      console.error('Error bulk uploading learner documents:', err);
+      toast.error(err.message || 'Bulk upload failed');
+    } finally {
+      setUploadingDocKey('');
+    }
+  };
+
+  const handleOpenLearnerDocument = async (document) => {
+    const filePath = getDocumentStoragePath(document);
+    if (!filePath) {
+      toast.error('No uploaded file is attached to this document');
+      return;
+    }
+
+    try {
+      const bucket = document.storage_bucket || LEARNER_DOCUMENT_BUCKET;
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .createSignedUrl(filePath, 300);
+
+      if (error) throw error;
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      console.error('Error opening learner document:', err);
+      toast.error('Document file could not be opened');
     }
   };
 
@@ -604,9 +789,49 @@ export default function RegistrarRecords() {
             </span>
           </div>
           <div className="p-4">
+            <input
+              ref={bulkUploadInputRef}
+              type="file"
+              multiple
+              accept={DOCUMENT_ACCEPT}
+              className="hidden"
+              onChange={(event) => {
+                handleBulkDocumentUpload(event.target.files);
+                event.target.value = '';
+              }}
+            />
+            <div className="mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Learner Document Files
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Upload one file per document, or bulk upload files named like Form 137, Form 138, Diploma, or Transfer.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => bulkUploadInputRef.current?.click()}
+                disabled={!selectedStudent || uploadingDocKey === 'bulk'}
+                className={`inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                  selectedStudent && uploadingDocKey !== 'bulk'
+                    ? 'bg-violet-600 text-white hover:bg-violet-700'
+                    : 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-800'
+                }`}
+                title={selectedStudent ? 'Bulk upload matched document files' : 'Select a student first'}
+              >
+                {uploadingDocKey === 'bulk' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                Bulk Upload
+              </button>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               {DOCUMENT_TYPES.map((doc) => {
                 const Icon = doc.icon;
+                const currentDocument = selectedStudent ? getDocumentRecord(selectedDocuments, doc) : null;
+                const isSubmitted = !!currentDocument?.is_submitted;
+                const hasFile = !!getDocumentStoragePath(currentDocument);
+                const uploadKey = canonicalDocumentTypeId(doc.id);
+                const isUploading = uploadingDocKey === uploadKey || uploadingDocKey === 'bulk';
                 const colorMap = {
                   blue: 'hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20',
                   emerald: 'hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20',
@@ -624,22 +849,65 @@ export default function RegistrarRecords() {
                   pink: 'bg-pink-100 dark:bg-pink-900/40 text-pink-600 dark:text-pink-400',
                 };
                 return (
-                  <button
+                  <div
                     key={doc.id}
-                    onClick={() => selectedStudent && handlePrintDocument(doc)}
                     className={`group relative p-3.5 rounded-xl border-2 border-gray-200 dark:border-gray-700 transition-all duration-200 text-left ${colorMap[doc.color]} ${!selectedStudent ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                    disabled={!selectedStudent}
-                    title={selectedStudent ? `Print ${doc.name}` : 'Select a student first'}
                   >
                     <div className={`p-2 rounded-lg ${iconBg[doc.color]} w-fit mb-2`}>
                       <Icon className="w-4.5 h-4.5" />
                     </div>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white">{doc.name}</p>
                     <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">{doc.desc}</p>
-                    {selectedStudent && selectedDocuments.some(item => item.document_type === doc.id && item.is_submitted) && (
+                    {hasFile && (
+                      <p className="mt-2 flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400 truncate" title={currentDocument.file_name}>
+                        <Paperclip className="w-3 h-3 flex-shrink-0" />
+                        <span className="truncate">{currentDocument.file_name || 'Uploaded file'}</span>
+                      </p>
+                    )}
+                    <div className="mt-3 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => selectedStudent && handlePrintDocument(doc)}
+                        disabled={!selectedStudent}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-teal-600 hover:bg-white/80 dark:hover:bg-gray-800 transition-colors disabled:opacity-40"
+                        title={selectedStudent ? `Print ${doc.name}` : 'Select a student first'}
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                      </button>
+                      <label
+                        className={`p-1.5 rounded-lg transition-colors ${
+                          selectedStudent && !isUploading
+                            ? 'text-gray-400 hover:text-violet-600 hover:bg-white/80 dark:hover:bg-gray-800 cursor-pointer'
+                            : 'text-gray-300 cursor-not-allowed'
+                        }`}
+                        title={selectedStudent ? `Upload ${doc.name}` : 'Select a student first'}
+                      >
+                        {isUploading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                        <input
+                          type="file"
+                          accept={DOCUMENT_ACCEPT}
+                          className="hidden"
+                          disabled={!selectedStudent || isUploading}
+                          onChange={(event) => {
+                            handleSingleDocumentUpload(doc, event.target.files?.[0]);
+                            event.target.value = '';
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenLearnerDocument(currentDocument)}
+                        disabled={!hasFile}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-white/80 dark:hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:hover:text-gray-400"
+                        title={hasFile ? `Open ${currentDocument.file_name || doc.name}` : 'No uploaded file'}
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {selectedStudent && isSubmitted && (
                       <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-emerald-500" />
                     )}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -1099,8 +1367,11 @@ export default function RegistrarRecords() {
                       </div>
                       <div className="space-y-2">
                         {DOCUMENT_TYPES.map(docType => {
-                          const doc = selectedDocuments.find(item => item.document_type === docType.id);
+                          const doc = getDocumentRecord(selectedDocuments, docType);
                           const isSubmitted = !!doc?.is_submitted;
+                          const hasFile = !!getDocumentStoragePath(doc);
+                          const uploadKey = canonicalDocumentTypeId(docType.id);
+                          const isUploading = uploadingDocKey === uploadKey || uploadingDocKey === 'bulk';
                           const Icon = docType.icon;
                           return (
                             <div key={docType.id} className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 flex items-center gap-3">
@@ -1110,6 +1381,11 @@ export default function RegistrarRecords() {
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-semibold text-gray-900 dark:text-white">{docType.name}</p>
                                 <p className="text-xs text-gray-500 dark:text-gray-400">{isSubmitted ? `Submitted ${formatDate(doc.submitted_date)}` : 'Not submitted'}</p>
+                                {hasFile && (
+                                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                    {doc.file_name || 'Uploaded file'}{doc.file_size ? ` • ${formatFileSize(doc.file_size)}` : ''}
+                                  </p>
+                                )}
                               </div>
                               <button
                                 onClick={() => handleDocumentToggle(docType, !isSubmitted)}
@@ -1117,6 +1393,34 @@ export default function RegistrarRecords() {
                                 title={isSubmitted ? 'Clear submission' : 'Mark submitted'}
                               >
                                 <span className={`block w-5 h-5 rounded-full bg-white shadow transition-transform ${isSubmitted ? 'translate-x-5' : 'translate-x-0'}`} />
+                              </button>
+                              <label
+                                className={`p-2 rounded-lg transition-colors ${
+                                  !isUploading
+                                    ? 'text-gray-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/30 cursor-pointer'
+                                    : 'text-gray-300 cursor-not-allowed'
+                                }`}
+                                title={`Upload ${docType.name}`}
+                              >
+                                {isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                                <input
+                                  type="file"
+                                  accept={DOCUMENT_ACCEPT}
+                                  className="hidden"
+                                  disabled={isUploading}
+                                  onChange={(event) => {
+                                    handleSingleDocumentUpload(docType, event.target.files?.[0]);
+                                    event.target.value = '';
+                                  }}
+                                />
+                              </label>
+                              <button
+                                onClick={() => handleOpenLearnerDocument(doc)}
+                                disabled={!hasFile}
+                                className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors disabled:opacity-30 disabled:hover:text-gray-400"
+                                title={hasFile ? `Open ${doc.file_name || docType.name}` : 'No uploaded file'}
+                              >
+                                <Eye className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => handlePrintDocument(docType)}

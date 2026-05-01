@@ -10,8 +10,9 @@ import {
 import {
   ArrowLeft, Printer, User, MapPin, Users, Heart, Activity, Phone,
   FileText, History, CheckCircle, AlertCircle, CalendarCheck, BookOpen,
-  TrendingUp, Clock, UserX, ShieldCheck, GraduationCap, Award
+  TrendingUp, Clock, UserX, ShieldCheck, GraduationCap, Award, Download
 } from 'lucide-react'
+import { LEARNER_DOCUMENT_BUCKET, formatFileSize, getDocumentStoragePath } from '../../lib/learnerDocuments'
 import toast from 'react-hot-toast'
 
 // ─── Skeleton Loader ─────────────────────────────────────────
@@ -212,6 +213,27 @@ export default function StudentDetail() {
       console.error(err)
     }
     setLoading(false)
+  }
+
+  const handleOpenDocument = async (document) => {
+    const filePath = getDocumentStoragePath(document)
+    if (!filePath) {
+      toast.error('No uploaded file is attached to this document')
+      return
+    }
+
+    try {
+      const bucket = document.storage_bucket || LEARNER_DOCUMENT_BUCKET
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .createSignedUrl(filePath, 300)
+
+      if (error) throw error
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      toast.error('Document file could not be opened')
+      console.error(err)
+    }
   }
 
   // ─── Computed: Attendance Stats ────────────────────────────
@@ -641,7 +663,21 @@ export default function StudentDetail() {
                         {doc.submitted_date && (
                           <p className="text-xs text-gray-500">Submitted: {doc.submitted_date}</p>
                         )}
+                        {getDocumentStoragePath(doc) && (
+                          <p className="text-xs text-gray-500">
+                            {doc.file_name || 'Uploaded file'}{doc.file_size ? ` - ${formatFileSize(doc.file_size)}` : ''}
+                          </p>
+                        )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDocument(doc)}
+                        disabled={!getDocumentStoragePath(doc)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Open
+                      </button>
                     </motion.div>
                   ))}
                 </div>
